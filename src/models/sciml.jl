@@ -112,13 +112,15 @@ extracted before the next invocation of `f!`.
 
 Unfortunately, JumpProcesses.jl always uses a dense trajectory encoding, so that
 the recorded trajectory information is highly redundant and needs to be filtered
-by `each_event` for output in sparse long format. 
+by `each_event` for output in sparse long format.
 """
 @kwdef struct JumpModel <: Model{JumpState}
     system::ModelingToolkit.System
     method::JumpProcesses.AbstractAggregatorAlgorithm
     parameters
 end
+
+parameters(f!::JumpModel) = Dict(normalize_name(sym) => val for (sym, val) in f!.parameters)
 
 Models.describe(::SciML.JumpModel) = Models.Label("SciML JumpSystem")
 
