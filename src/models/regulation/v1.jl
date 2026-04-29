@@ -572,23 +572,19 @@ safe_div(K::Real, X::Real) = iszero(K) ? zero(K / X) : K / X
 
 hill2(X, v, K, n) = v / (1.0 + safe_div(K, X) ^ n)
 
-_param_name(gene::Symbol, kind::Symbol) = Symbol("$(gene).$(kind)")
-_param_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol) = Symbol("$(gene).$(kind).$(from).$(field)")
-_param_name(i::Int, kind::Symbol) = Symbol("reaction.$(i).$(kind)")
+parameter_name(gene::Symbol, kind::Symbol) = Symbol("$(gene).$(kind)")
+parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol) =
+    Symbol("$(gene).$(kind).$(from).$(field)")
+parameter_name(i::Int, kind::Symbol) = Symbol("reaction.$(i).$(kind)")
 
+make_parameter(name::Symbol) = ModelingToolkit.toparam(Symbolics.variable(name))
+make_parameter(name::Symbol, default::Float64) = Symbolics.setmetadata(make_parameter(name), Symbolics.VariableDefaultValue, default)
 
 function regulation(
     genes::Dict{Symbol,<:ModelingToolkit.AbstractSystem};
     definition::Definition,
     t::Num,
 )
-    # mark regulation parameters as MTK symbolics
-    symbolic_params = Pair[]
-    function tracked_param(name::Symbol, value::Float64)
-        sym = ModelingToolkit.toparam(Symbolics.variable(name))
-        push!(symbolic_params, sym => value)
-        sym
-    end
 
     inactive(target::Gene) =
         if target.unique
@@ -599,34 +595,34 @@ function regulation(
 
     activation_rate(target::Gene) = (
         inactive(target)
-        * tracked_param(_param_name(target.name, :activation), target.base_rates.activation)
+        * make_parameter(parameter_name(target.name, :activation), target.base_rates.activation)
         * target.repression(
             (  # ^ arguments and value go towards 0 as repression increases
                 hill2(species_reference(from; t, genes), 1.0,
-                    tracked_param(_param_name(target.name, :repression, from, :at), at),
-                    tracked_param(_param_name(target.name, :repression, from, :k), k))
+                    make_parameter(parameter_name(target.name, :repression, from, :at), at),
+                    make_parameter(parameter_name(target.name, :repression, from, :k), k))
                 for (; from, k, at) in target.repression.slots
             );
-            T = Num
+            T=Num
         )
     )
 
     deactivation_rate(target::Gene) = (
         genes[target.name].active
-        * tracked_param(_param_name(target.name, :deactivation), target.base_rates.deactivation)
+        * make_parameter(parameter_name(target.name, :deactivation), target.base_rates.deactivation)
         * target.activation(
             (  # ^ arguments and value go towards 0 as activation increases
                 hill2(species_reference(from; t, genes), 1.0,
-                    tracked_param(_param_name(target.name, :activation, from, :at), at),
-                    tracked_param(_param_name(target.name, :activation, from, :k), k))
+                    make_parameter(parameter_name(target.name, :activation, from, :at), at),
+                    make_parameter(parameter_name(target.name, :activation, from, :k), k))
                 for (; from, k, at) in target.activation.slots
             );
-            T = Num
+            T=Num
         )
     )
 
     # Regulation for the whole network:
-    reactions = [
+    [
         # For each gene...
         mapreduce(vcat, definition.genes, init = Reaction[]) do target::Gene
             [
@@ -650,7 +646,7 @@ function regulation(
                 map(target.proteolysis.slots) do (; from, k)
                     proteases = species_reference(from; t, genes)
                     proteins = genes[target.name].proteins
-                    k_symbolic = tracked_param(_param_name(target.name, :proteolysis, from, :k), k)
+                    k_symbolic = make_parameter(parameter_name(target.name, :proteolysis, from, :k), k)
 
                     if from == target.name
                         # This is a loop in the proteolysis repression network
@@ -669,7 +665,8 @@ function regulation(
         # their rate is nonzero.
         [
             Reaction(
-                tracked_param(_param_name(i, :k₊), k₊),
+                # need to use :k⁺ instead of :k₊ because ₊ is used as a scope separator in MTK
+                make_parameter(parameter_name(i, :k⁺), k₊),
                 species_reference.(keys(from.counts); t, genes),
                 species_reference.(keys(to.counts); t, genes),
                 collect(values(from.counts)),
@@ -681,7 +678,7 @@ function regulation(
 
         [
             Reaction(
-                tracked_param(_param_name(i, :k₋), k₋),
+                make_parameter(parameter_name(i, :k₋), k₋),
                 species_reference.(keys(to.counts); t, genes),
                 species_reference.(keys(from.counts); t, genes),
                 collect(values(to.counts)),
@@ -691,7 +688,6 @@ function regulation(
             if k₋ > 0.0
         ]
     ]
-    reactions, symbolic_params
 end
 
 const JUMP_PROCESSES_METHODS = Dict(
@@ -774,19 +770,16 @@ function build(definition::Definition; method::Symbol = :default)
         for g in definition.genes
     )
 
-    base_params = [
-        getproperty(genes[g.name], kind) =>
-            getfield(g.base_rates, kind)
+    @named reaction_system = ReactionSystem(
+        regulation(genes; definition, t),
+        t,
+        systems=collect(values(genes)),
+        initial_conditions=Dict(
+            getproperty(genes[g.name], kind) => getfield(g.base_rates, kind)
             for g in definition.genes
             for kind in fieldnames(typeof(g.base_rates))
             if kind ∉ (:activation, :deactivation)
-    ]
-    reg_reactions, reg_params = regulation(genes; definition, t)
-
-    @named reaction_system = ReactionSystem(
-        reg_reactions,
-        t,
-        systems = collect(values(genes)),
+        )
     )
     reaction_system = complete(reaction_system)
 
@@ -796,63 +789,62 @@ function build(definition::Definition; method::Symbol = :default)
             definition = reaction_system,
             model = SciML.JumpModel(
                 system = complete(jump_model(reaction_system)),
-                method = pick_method(reaction_system; method)(),
-                parameters = [base_params; reg_params],
+                method = pick_method(reaction_system; method)()
             ),
         ),
     )
 end
 
-function update(definition::Definition, params::Dict{Symbol, Float64})
+function update(definition::Definition, parameters::Dict{Symbol,Float64})
     Definition(;
         definition.polymerases,
         definition.ribosomes,
         definition.proteasomes,
-        genes = [update(g, params) for g in definition.genes],
-        reactions = [
+        genes=[update(g, parameters) for g in definition.genes],
+        reactions=[
             Models.Reaction(;
                 rxn.from, rxn.to,
-                k₊ = get(params, _param_name(i, :k₊), rxn.k₊),
-                k₋ = get(params, _param_name(i, :k₋), rxn.k₋),
+                k₊ = get(parameters, parameter_name(i, :k⁺), rxn.k₊),
+                k₋ = get(parameters, parameter_name(i, :k₋), rxn.k₋),
             )
             for (i, rxn) in enumerate(definition.reactions)
         ]
     )
 end
 
-function update(gene::Gene, params::Dict{Symbol, Float64})
+function update(gene::Gene, parameters::Dict{Symbol, Float64})
     T = typeof(gene.base_rates)
     Gene(;
         gene.name, gene.unique,
         base_rates = T(; (
-            f => get(params, _param_name(gene.name, f), getfield(gene.base_rates, f))
+            f => get(parameters, parameter_name(gene.name, f), getfield(gene.base_rates, f))
             for f in fieldnames(T)
         )...),
-        activation = update(gene.activation, gene.name, :activation, params),
-        repression = update(gene.repression, gene.name, :repression, params),
-        proteolysis = update(gene.proteolysis, gene.name, params),
+        activation = update(gene.activation, gene.name, :activation, parameters),
+        repression = update(gene.repression, gene.name, :repression, parameters),
+        proteolysis = update(gene.proteolysis, gene.name, parameters),
     )
 end
 
-function update(reg::Union{Activation, Repression}, gene::Symbol, kind::Symbol, params::Dict{Symbol, Float64})
-    typeof(reg)(;
-        reg.aggregate,
+function update(regulation::Union{Activation,Repression}, gene::Symbol, kind::Symbol, parameters::Dict{Symbol, Float64})
+    typeof(regulation)(;
+        regulation.aggregate,
         slots = [
             HillRegulator(; slot.from,
-                at = get(params, _param_name(gene, kind, slot.from, :at), slot.at),
-                k = get(params, _param_name(gene, kind, slow.from, :k), slot.k)
+                at = get(parameters, parameter_name(gene, kind, slot.from, :at), slot.at),
+                k = get(parameters, parameter_name(gene, kind, slot.from, :k), slot.k)
             )
             for slot in reg.slots
         ]
     )
 end
 
-function update(prot::Proteolysis, gene::Symbol, params::Dict{Symbol, Float64})
+function update(proteolysis::Proteolysis, gene::Symbol, parameters::Dict{Symbol, Float64})
     Proteolysis(; slots = [
         DirectRegulator(; slot.from,
-            k = get(params, _param_name(gene, :proteolysis, slot.from, :k), slot.k),
+            k = get(parameters, parameter_name(gene, :proteolysis, slot.from, :k), slot.k),
         )
-        for slot in prot.slots
+        for slot in proteolysis.slots
     ])
 end
 
