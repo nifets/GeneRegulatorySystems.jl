@@ -118,11 +118,12 @@ by `each_event` for output in sparse long format.
 @kwdef struct JumpModel <: Model{JumpState}
 	system::ModelingToolkit.System
 	method::JumpProcesses.AbstractAggregatorAlgorithm
+	parameter_overrides::Dict{Symbol, Float64} = Dict{Symbol, Float64}()
 end
 
-parameter_map(f!::JumpModel) = Dict(
-	normalize_name(k) => v for
-	(k, v) in ModelingToolkit.initial_conditions(f!.system)
+parameter_map(f!::JumpModel) = merge(
+    Dict(normalize_name(k) => Float64(v) for (k, v) in ModelingToolkit.initial_conditions(f!.system)),
+    f!.parameter_overrides,
 )
 
 Models.describe(::SciML.JumpModel) = Models.Label("SciML JumpSystem")
@@ -146,9 +147,16 @@ Models.adapt!(x::JumpState, f!::JumpModel, ::Val{Copy}) where {Copy} =
 Models.adapt!(x::FlatState, f!::JumpModel, _copy) = JumpState(
 	problem = ModelingToolkit.JumpProblem(
 		f!.system,
-		[
-			s => get(x.counts, normalize_name(s), 0)
-			for s in ModelingToolkit.unknowns(f!.system)
+        [
+            [
+                sym => f!.parameter_overrides[normalize_name(sym)]
+                for sym in ModelingToolkit.parameters(f!.system)
+                if haskey(f!.parameter_overrides, normalize_name(sym))
+            ]
+            [
+                s => get(x.counts, normalize_name(s), 0)
+                for s in ModelingToolkit.unknowns(f!.system)
+            ]
 		],
 		(x.t, Inf),
 		aggregator = f!.method,
