@@ -834,7 +834,7 @@ function update(regulation::Union{Activation,Repression}, gene::Symbol, kind::Sy
                 at = get(parameters, parameter_name(gene, kind, slot.from, :at), slot.at),
                 k = get(parameters, parameter_name(gene, kind, slot.from, :k), slot.k)
             )
-            for slot in reg.slots
+            for slot in regulation.slots
         ]
     )
 end

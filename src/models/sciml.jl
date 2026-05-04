@@ -122,7 +122,7 @@ by `each_event` for output in sparse long format.
 end
 
 parameter_map(f!::JumpModel) = merge(
-    Dict(normalize_name(k) => Float64(v) for (k, v) in ModelingToolkit.initial_conditions(f!.system)),
+    Dict(normalize_name(k) => v for (k, v) in ModelingToolkit.initial_conditions(f!.system)),
     f!.parameter_overrides,
 )
 
