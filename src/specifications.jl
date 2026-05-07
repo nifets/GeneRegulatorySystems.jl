@@ -64,7 +64,7 @@ top-level document will be interpreted as a `:step`. Specifically:
         index variable name is optionally defined by `x[:as]`. If there are any
         other mappings in `x`, they will be collected and the `Each` wrapped in
         a [`Scope`](@ref) using these definitions. In other words, the
-        corresponding definitions are available in the `items` and `step`
+        corresponding definitions are avai  le in the `items` and `step`
         definitions, but cannot refer to the index variable.
     5. (*scope*) If `x` is not empty, it is parsed as a [`Scope`](@ref), with
         the `step` defined by `x[:step]` interpreted as a `:step`
@@ -291,6 +291,7 @@ free(s::Specification) = s.free
 
 paste(x::AbstractString) = x
 paste(x::Number) = repr(x)
+paste(xs::AbstractVector) = "[" * join(paste.(xs), ",") * "]"
 paste(::Any) = "__omitted__"
 
 pluck(x, path::AbstractVector) = foldl(pluck, path, init = x)
