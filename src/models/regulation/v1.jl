@@ -795,6 +795,8 @@ function build(definition::Definition; method::Symbol = :default)
     )
 end
 
+constructor(::Val{Symbol("regulation/v1")}) = build
+
 function update(definition::Definition, parameters::Dict{Symbol,Float64})
     Definition(;
         definition.polymerases,
@@ -848,6 +850,52 @@ function update(proteolysis::Proteolysis, gene::Symbol, parameters::Dict{Symbol,
     ])
 end
 
-constructor(::Val{Symbol("regulation/v1")}) = build
+"""
+    knockout(model; genes)
+
+Build a new V1 model with `genes` knocked out.
+
+# Specification
+
+`{"{regulation/v1/knockout}": {"of": {"\$": "do"}, "genes": ["A"]}}`
+"""
+function knockout end
+
+knockout(specification::AbstractDict{Symbol}) = knockout(
+    specification[:of];
+    genes = Symbol.(specification[:genes])
+)
+
+knockout(model::Models.Wrapped; genes) = knockout(model.definition, model.model; genes)
+knockout(::Any, model::Models.Model; genes) = knockout(model; genes)
+
+# TODO: don't rebuild entire model, instead edit existing reaction system/jump model.
+# question is whether Catalyst offers any kind of API for that.
+knockout(definition::Definition, ::Models.Model; genes) = build(knockout(definition; genes))
+
+function knockout(definition::Definition; genes)
+    knocked_out = Set(genes)
+    remaining = filter(g -> g.name ∉ knocked_out, definition.genes)
+    cleaned = map(remaining) do gene
+        Gene(;
+            gene.name, gene.base_rates, gene.unique,
+            activation = Activation(;
+                gene.activation.aggregate,
+                slots = filter(s -> s.from ∉ knocked_out, gene.activation.slots),
+            ),
+            repression = Repression(;
+                gene.repression.aggregate,
+                slots = filter(s -> s.from ∉ knocked_out, gene.repression.slots),
+            ),
+            proteolysis = Proteolysis(;
+                slots = filter(s -> s.from ∉ knocked_out, gene.proteolysis.slots),
+            ),
+        )
+    end
+    Definition(; definition.polymerases, definition.ribosomes, definition.proteasomes,
+        genes = cleaned, definition.reactions)
+end
+
+constructor(::Val{Symbol("regulation/v1/knockout")}) = knockout
 
 end
