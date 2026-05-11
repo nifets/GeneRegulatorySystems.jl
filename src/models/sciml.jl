@@ -47,7 +47,7 @@ contained in the integrator, while the random number generator is part of the
 problem object.
 
 To be compatible with a `JumpModel` `f!`, the `JumpState`'s `problem` (and
-`integrator`) must have been constructed from the same `f!.system`. To check
+`integrator`) must have been constructed by remaking `f!.template`. To check
 whether this is actually the case, `JumpState` also contains a reference to the
 corresponding `f!`.
 """
@@ -83,9 +83,8 @@ FlatState(x::JumpState) = FlatState(
 """
 	JumpModel <: Model{JumpState}
 
-Represents the stochastic dynamics of applying a
-`JumpProcesses.AbstractAggregatorAlgorithm` `method` to a
-`ModelingToolkit.System` `system` with a set of `parameters`.
+Represents the stochastic dynamics of a compiled `JumpProcesses.JumpProblem`
+`template`. The template is built once from a `ModelingToolkit.System` and a `JumpProcesses.AbstractAggregatorAlgorithm` method.
 
 Gene regulation models in this package ultimately get compiled to `JumpModel`s.
 
@@ -102,8 +101,8 @@ Advance the simulation by applying the stochastic dynamics `f!` to `x` for `Δt`
 time units, realizing a segment of the state trajectory.
 
 `x` must be compatible with `f!`, that is, the `JumpProcesses.JumpProblem` (and
-corresponding integrator) in `x` must be compatible with `f!.system`. This is
-currently conservatively checked as `f! === x.f!`. If necessary, users can call
+corresponding integrator) in `x` must have been produced by remaking `f!.template`.
+This is conservatively checked as `f! === x.f!`. If necessary, users can call
 `adapt!(x, f!)` to convert `x` appropriately.
 
 If `record === true`, `x.integrator` will record all jumps, otherwise the
@@ -116,13 +115,26 @@ the recorded trajectory information is highly redundant and needs to be filtered
 by `each_event` for output in sparse long format.
 """
 @kwdef struct JumpModel <: Model{JumpState}
-	system::ModelingToolkit.System
-	method::JumpProcesses.AbstractAggregatorAlgorithm
+	template::JumpProcesses.JumpProblem
 end
 
+JumpModel(system::ModelingToolkit.System, method::JumpProcesses.AbstractAggregatorAlgorithm) =
+    JumpModel(template = ModelingToolkit.JumpProblem(
+        system,
+        [s => 0 for s in ModelingToolkit.unknowns(system)],
+        (0.0, Inf),
+        aggregator = method,
+        u0_eltype = Int,
+    ))
+
+system(f!::JumpModel) = f!.template.prob.f.sys
+method(f!::JumpModel) = f!.template.aggregator
+
+unknowns(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.variable_symbols(f!.template)
+parameters(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.parameter_symbols(f!.template)
+
 parameter_map(f!::JumpModel) = Dict(
-	normalize_name(k) => v for
-	(k, v) in ModelingToolkit.initial_conditions(f!.system)
+	normalize_name(s) => f!.template.ps[s] for s in parameters(f!)
 )
 
 Models.describe(::SciML.JumpModel) = Models.Label("SciML JumpSystem")
@@ -144,19 +156,24 @@ Models.adapt!(x::JumpState, f!::JumpModel, ::Val{Copy}) where {Copy} =
 	end
 
 Models.adapt!(x::FlatState, f!::JumpModel, _copy) = JumpState(
-	problem = ModelingToolkit.JumpProblem(
-		f!.system,
-		[
-			s => get(x.counts, normalize_name(s), 0)
-			for s in ModelingToolkit.unknowns(f!.system)
-		],
-		(x.t, Inf),
-		aggregator = f!.method,
-		rng = x.randomness,
-		u0_eltype = Int,
-	);
+    problem = with_rng(JumpProcesses.remake(f!.template;
+        u0 = [
+            s => get(x.counts, normalize_name(s), 0)
+ 			for s in unknowns(f!)
+        ],
+        tspan = (x.t, Inf));
+        rng = x.randomness
+    );
 	f!,
 )
+
+# HACK: JumpProcesses.remake currently doesn't support rng as kwarg
+function with_rng(jp::JumpProcesses.JumpProblem; rng)
+    T = JumpProcesses.remaker_of(jp)
+    T(jp.prob, jp.aggregator, jp.discrete_jump_aggregation, jp.jump_callback,
+      jp.constant_jumps, jp.variable_jumps, jp.regular_jump,
+      jp.massaction_jump, rng, jp.kwargs)
+end
 
 function Models.each_event(callback::Function, x::JumpState)
 	solution = x.integrator.sol

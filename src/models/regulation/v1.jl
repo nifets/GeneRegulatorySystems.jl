@@ -788,8 +788,8 @@ function build(definition::Definition; method::Symbol = :default)
         model = Models.Wrapped(
             definition = reaction_system,
             model = SciML.JumpModel(
-                system = complete(jump_model(reaction_system)),
-                method = pick_method(reaction_system; method)()
+                complete(jump_model(reaction_system)),
+                pick_method(reaction_system; method)()
             ),
         ),
     )
