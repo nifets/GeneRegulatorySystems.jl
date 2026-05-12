@@ -166,6 +166,29 @@ unwrap(model) = model
 unwrap(wrapped::Wrapped) = unwrap(wrapped.model)
 
 """
+    parameters(model)
+
+Returns an `AbstractDict{Symbol, Any}`, corresponding to the tunable parameters of the model.
+"""
+parameters(::Any) = Dict{Symbol, Any}()
+parameters(wrapped::Wrapped) = parameters(wrapped.model)
+
+"""
+    remake(model, parameters::AbstractDict{Symbol, Any})
+
+Return a copy of `model` with updated parameters.
+
+`parameters` stores named tunable values. Each model type defines
+which parameter types it recognises and how it applies them.
+"""
+remake(model, parameters::AbstractDict) = model
+remake(wrapped::Wrapped, parameters::AbstractDict) = Wrapped(
+    remake(wrapped.definition, parameters),
+    remake(wrapped.model, parameters)
+)
+
+
+"""
     adapt!(x, f!; copy = false)
 
 Convert the simulation state `x` to a type accepted by the model `f!`.

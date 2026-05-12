@@ -130,11 +130,13 @@ JumpModel(system::ModelingToolkit.System, method::JumpProcesses.AbstractAggregat
 system(f!::JumpModel) = f!.template.prob.f.sys
 method(f!::JumpModel) = f!.template.aggregator
 
-unknowns(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.variable_symbols(f!.template)
-parameters(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.parameter_symbols(f!.template)
+variable_symbols(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.variable_symbols(f!.template)
+parameter_symbols(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.parameter_symbols(f!.template)
 
-parameter_map(f!::JumpModel) = Dict(
-	normalize_name(s) => f!.template.ps[s] for s in parameters(f!)
+Base.getindex(f!::JumpModel, s) = f!.template.ps[s]
+
+Models.parameters(f!::JumpModel) = Dict(
+	normalize_name(s) => f![s] for s in parameter_symbols(f!)
 )
 
 Models.describe(::SciML.JumpModel) = Models.Label("SciML JumpSystem")
@@ -156,10 +158,11 @@ Models.adapt!(x::JumpState, f!::JumpModel, ::Val{Copy}) where {Copy} =
 	end
 
 Models.adapt!(x::FlatState, f!::JumpModel, _copy) = JumpState(
+    # because we are only modifying u0 here and not p, f!.template is not mutated.
     problem = with_rng(JumpProcesses.remake(f!.template;
         u0 = [
             s => get(x.counts, normalize_name(s), 0)
- 			for s in unknowns(f!)
+ 			for s in variable_symbols(f!)
         ],
         tspan = (x.t, Inf));
         rng = x.randomness
@@ -174,6 +177,27 @@ function with_rng(jp::JumpProcesses.JumpProblem; rng)
       jp.constant_jumps, jp.variable_jumps, jp.regular_jump,
       jp.massaction_jump, rng, jp.kwargs)
 end
+
+# HACK: JumpProcesses.remake mutate the original problem.
+# see: https://github.com/SciML/JumpProcesses.jl/issues/416
+# and https://github.com/SciML/JumpProcesses.jl/issues/554
+function remake_p(jp::JumpProcesses.JumpProblem; p)
+    new_inner = JumpProcesses.remake(jp.prob; p = p)
+    new_maj = deepcopy(jp.massaction_jump)
+    JumpProcesses.update_parameters!(new_maj, new_inner.p)
+    T = JumpProcesses.remaker_of(jp)
+    T(new_inner, jp.aggregator, jp.discrete_jump_aggregation, jp.jump_callback,
+        jp.constant_jumps, jp.variable_jumps, jp.regular_jump,
+        new_maj, jp.rng, jp.kwargs)
+end
+
+Models.remake(f!::JumpModel, parameters::AbstractDict{Symbol, <:Real}) = JumpModel(
+    template = remake_p(f!.template; p = [
+        s => get(parameters, normalize_name(s), f![s])
+        for s in parameter_symbols(f!)
+    ])
+)
+
 
 function Models.each_event(callback::Function, x::JumpState)
 	solution = x.integrator.sol
