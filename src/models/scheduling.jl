@@ -602,4 +602,14 @@ function reify(primitive!::Primitive, path::AbstractString; _...)
     end
 end
 
+Specifications.locate(f!::Schedule, path::AbstractString) = Specifications.locate(f!.specification, path)
+
+Specifications.set(f!::Schedule, path::AbstractString, new::Specification) = Schedule(;
+    specification = Specifications.set(f!.specification, path, new),
+    f!.bindings, f!.branch, f!.path
+)
+
+prebuild(f!::Schedule, path::AbstractString) =
+    Specifications.set(f!, path, Template(reify(f!, path)))
+
 end
