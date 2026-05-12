@@ -892,6 +892,8 @@ function build(definition::Definition; method::Symbol = :default)
     )
 end
 
+constructor(::Val{Symbol("regulation/v1")}) = build
+
 """
     knockout(model; genes)
 
