@@ -289,6 +289,93 @@ free(::Slice) = Set{Symbol}()
 free(::Load) = Set{Symbol}()
 free(s::Specification) = s.free
 
+"""
+    locate(x, path) -> Specification
+
+    Return the specification in `x` at `path`.
+"""
+function locate end
+
+locate(s::Specification, path::AbstractString) =
+    isempty(path) ? s :
+    error("cannot descend to '$path' in $(nameof(typeof(s)))")
+
+function locate(s::Scope, path::AbstractString)
+    isempty(path) && return s
+    token = path[1]
+    tail = path[2:end]
+    if token == '.'
+        m = match(r"^([^+/.]+)(.*)", tail)
+        locate(s.definitions[(Symbol(m[1]))], m[2])
+    elseif token == '+' || token == '/'
+        locate(s.step, tail)
+    else
+        error("cannot descend to '$path' in Scope")
+    end
+end
+
+function locate(list::List, path::AbstractString)
+    isempty(path) && return list
+    m = match(r"^(-?)(\d+)(.*)", path)
+    m === nothing && error("cannot descend to '$path' in List")
+    _, head, tail = m
+    locate(list.items[parse(Int, head)], tail)
+end
+
+function locate(each::Each, path::AbstractString)
+    isempty(path) && return each
+    m = match(r"^(-?)(\d+)(.*)", path)
+    m === nothing && error("cannot descend to '$path' in Each")
+    _, _, tail = m
+    locate(each.step, tail)
+end
+
+"""
+    set(x, path::AbstractString, new::Specification)
+
+    Substitute the specification in `x` at `path` with `new`.
+"""
+function set end
+
+set(::Specification, path::AbstractString, new::Specification) =
+    isempty(path) ? new : error("cannot descend to '$path' in $(nameof(typeof(s)))")
+
+function set(s::Scope, path::AbstractString, new::Specification)
+    isempty(path) && return new
+    token = path[1]
+    tail = path[2:end]
+    if token == '.'
+        m = match(r"^([^+/.]+)(.*)", tail)
+        name = Symbol(m[1])
+        new_definitions = copy(s.definitions)
+        new_definitions[name] = set(s.definitions[name], m[2], new)
+        Scope(; definitions = new_definitions, s.step, s.barrier, s.branch)
+    elseif token == '+' || token == '/'
+        Scope(; s.definitions, step = set(s.step, tail, new), s.barrier, s.branch)
+    else
+        error("cannot descend to '$path' in Scope")
+    end
+end
+
+function set(s::List, path::AbstractString, new::Specification)
+    isempty(path) && return new
+    m = match(r"^(-?)(\d+)(.*)", path)
+    m === nothing && error("cannot descend to '$path' in List")
+    _, head, tail = m
+    i = parse(Int, head)
+    items = copy(s.items)
+    items[i] = set(s.items[i], tail, new)
+    List(; items)
+end
+
+function set(s::Each, path::AbstractString, new::Specification)
+    isempty(path) && return new
+    m = match(r"^(-?)(\d+)(.*)", path)
+    m === nothing && error("cannot descend to '$path' in Each")
+    _, _, tail = m
+    Each(; s.items, s.as, step = set(s.step, tail, new))
+end
+
 paste(x::AbstractString) = x
 paste(x::Number) = repr(x)
 paste(xs::AbstractVector) = "[" * join(paste.(xs), ",") * "]"
