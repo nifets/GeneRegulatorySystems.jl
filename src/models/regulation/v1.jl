@@ -572,6 +572,18 @@ safe_div(K::Real, X::Real) = iszero(K) ? zero(K / X) : K / X
 
 hill2(X, v, K, n) = v / (1.0 + safe_div(K, X) ^ n)
 
+"""
+    parameter_name(gene::Symbol, kind::Symbol)
+    parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol)
+    parameter_name(i::Int, kind::Symbol)
+
+The canonical symbol used for a V1 parameter. The three forms cover the three
+parameter roles in V1:
+- `(gene, kind)` — per-gene base rate (`gene.transcription`, `gene.activation`, …)
+- `(gene, kind, from, field)` — regulation slot field (`gene.activation.from.at`,
+  `gene.proteolysis.from.k`)
+- `(i, kind)` — auxilary reaction rate constant (`reaction.1.k⁺`, `reaction.1.k₋`)
+"""
 parameter_name(gene::Symbol, kind::Symbol) = Symbol("$(gene).$(kind)")
 parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol) =
     Symbol("$(gene).$(kind).$(from).$(field)")
@@ -579,6 +591,91 @@ parameter_name(i::Int, kind::Symbol) = Symbol("reaction.$(i).$(kind)")
 
 make_parameter(name::Symbol) = ModelingToolkit.toparam(Symbolics.variable(name))
 make_parameter(name::Symbol, default::Float64) = Symbolics.setmetadata(make_parameter(name), Symbolics.VariableDefaultValue, default)
+
+function each_parameter(callback::Function, definition::Definition)
+    for g in definition.genes
+        for kind in fieldnames(typeof(g.base_rates))
+            callback(parameter_name(g.name, kind), getfield(g.base_rates, kind))
+        end
+        for slot in g.activation.slots
+            callback(parameter_name(g.name, :activation, slot.from, :at), slot.at)
+            callback(parameter_name(g.name, :activation, slot.from, :k),  slot.k)
+        end
+        for slot in g.repression.slots
+            callback(parameter_name(g.name, :repression, slot.from, :at), slot.at)
+            callback(parameter_name(g.name, :repression, slot.from, :k),  slot.k)
+        end
+        for slot in g.proteolysis.slots
+            callback(parameter_name(g.name, :proteolysis, slot.from, :k), slot.k)
+        end
+    end
+    for (i, rxn) in enumerate(definition.reactions)
+        callback(parameter_name(i, :k⁺), rxn.k₊)
+        callback(parameter_name(i, :k₋), rxn.k₋)
+    end
+end
+
+Models.parameters(definition::Definition) = let result = Dict{Symbol, Float64}()
+    each_parameter(definition) do name, default
+        result[name] = default
+    end
+    result
+end
+
+Models.remake(definition::Definition, parameters::AbstractDict{Symbol, <:Real}) = Definition(;
+    definition.polymerases,
+    definition.ribosomes,
+    definition.proteasomes,
+    genes=[Models.remake(g, parameters) for g in definition.genes],
+    reactions=[
+        Models.Reaction(;
+            rxn.from, rxn.to,
+            k₊ = get(parameters, parameter_name(i, :k⁺), rxn.k₊),
+            k₋ = get(parameters, parameter_name(i, :k₋), rxn.k₋),
+        )
+        for (i, rxn) in enumerate(definition.reactions)
+    ]
+)
+
+
+function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
+    T = typeof(gene.base_rates)
+    Gene(;
+        gene.name, gene.unique,
+        base_rates = T(; (
+            f => get(parameters, parameter_name(gene.name, f), getfield(gene.base_rates, f))
+            for f in fieldnames(T)
+        )...),
+        activation = Activation(;
+            gene.activation.aggregate,
+            slots = [
+                HillRegulator(; slot.from,
+                    at = get(parameters, parameter_name(gene.name, :activation, slot.from, :at), slot.at),
+                    k = get(parameters, parameter_name(gene.name, :activation, slot.from, :k), slot.k)
+                )
+                for slot in gene.activation.slots
+            ]
+        ),
+        repression = Activation(;
+            gene.repression.aggregate,
+            slots = [
+                HillRegulator(; slot.from,
+                    at = get(parameters, parameter_name(gene.name, :repression, slot.from, :at), slot.at),
+                    k = get(parameters, parameter_name(gene.name, :repression, slot.from, :k), slot.k)
+                )
+                for slot in gene.repression.slots
+            ]
+        ),
+        proteolysis = Proteolysis(;
+            slots = [
+                DirectRegulator(; slot.from,
+                    k = get(parameters, parameter_name(gene.name, :proteolysis, slot.from, :k), slot.k),
+                )
+                for slot in gene.proteolysis.slots
+            ]
+        ),
+    )
+end
 
 function regulation(
     genes::Dict{Symbol,<:ModelingToolkit.AbstractSystem};
@@ -788,66 +885,11 @@ function build(definition::Definition; method::Symbol = :default)
         model = Models.Wrapped(
             definition = reaction_system,
             model = SciML.JumpModel(
-                system = complete(jump_model(reaction_system)),
-                method = pick_method(reaction_system; method)()
+                complete(jump_model(reaction_system)),
+                pick_method(reaction_system; method)()
             ),
         ),
     )
-end
-
-constructor(::Val{Symbol("regulation/v1")}) = build
-
-function update(definition::Definition, parameters::Dict{Symbol,Float64})
-    Definition(;
-        definition.polymerases,
-        definition.ribosomes,
-        definition.proteasomes,
-        genes=[update(g, parameters) for g in definition.genes],
-        reactions=[
-            Models.Reaction(;
-                rxn.from, rxn.to,
-                k₊ = get(parameters, parameter_name(i, :k⁺), rxn.k₊),
-                k₋ = get(parameters, parameter_name(i, :k₋), rxn.k₋),
-            )
-            for (i, rxn) in enumerate(definition.reactions)
-        ]
-    )
-end
-
-function update(gene::Gene, parameters::Dict{Symbol, Float64})
-    T = typeof(gene.base_rates)
-    Gene(;
-        gene.name, gene.unique,
-        base_rates = T(; (
-            f => get(parameters, parameter_name(gene.name, f), getfield(gene.base_rates, f))
-            for f in fieldnames(T)
-        )...),
-        activation = update(gene.activation, gene.name, :activation, parameters),
-        repression = update(gene.repression, gene.name, :repression, parameters),
-        proteolysis = update(gene.proteolysis, gene.name, parameters),
-    )
-end
-
-function update(regulation::Union{Activation,Repression}, gene::Symbol, kind::Symbol, parameters::Dict{Symbol, Float64})
-    typeof(regulation)(;
-        regulation.aggregate,
-        slots = [
-            HillRegulator(; slot.from,
-                at = get(parameters, parameter_name(gene, kind, slot.from, :at), slot.at),
-                k = get(parameters, parameter_name(gene, kind, slot.from, :k), slot.k)
-            )
-            for slot in regulation.slots
-        ]
-    )
-end
-
-function update(proteolysis::Proteolysis, gene::Symbol, parameters::Dict{Symbol, Float64})
-    Proteolysis(; slots = [
-        DirectRegulator(; slot.from,
-            k = get(parameters, parameter_name(gene, :proteolysis, slot.from, :k), slot.k),
-        )
-        for slot in proteolysis.slots
-    ])
 end
 
 """

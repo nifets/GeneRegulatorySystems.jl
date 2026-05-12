@@ -193,6 +193,12 @@ function (f!::Adjust)(x::FlatState, _Δt::Float64; _...)
     x
 end
 
+Models.parameters(f!::Adjust) = f!.adjustment
+Models.remake(f!::Adjust, parameters::AbstractDict{Symbol}) = Adjust(
+    f!.adjust,
+    Dict(key => get(parameters, key, value) for (key, value) in f!.adjustment)
+)
+
 """
     Merge <: Instant{Branched}
 
