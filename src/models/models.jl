@@ -170,7 +170,6 @@ unwrap(wrapped::Wrapped) = unwrap(wrapped.model)
 
 Returns an `AbstractDict{Symbol, Any}`, corresponding to the tunable parameters of the model.
 """
-parameters(::Any) = Dict{Symbol, Any}()
 parameters(wrapped::Wrapped) = parameters(wrapped.model)
 
 """
