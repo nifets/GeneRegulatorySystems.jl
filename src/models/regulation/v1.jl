@@ -656,7 +656,7 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
                 for slot in gene.activation.slots
             ]
         ),
-        repression = Activation(;
+        repression = Repression(;
             gene.repression.aggregate,
             slots = [
                 HillRegulator(; slot.from,
@@ -895,27 +895,37 @@ end
 constructor(::Val{Symbol("regulation/v1")}) = build
 
 """
-    knockout(model; genes)
+    knockout(model; genes, soft=false)
 
-Build a new V1 model with `genes` knocked out.
+Knock out `genes` from a V1 model.
+
+With `soft=false` (default, *hard* knockout), the genes are structurally removed
+from the `Definition` and the model is fully recompiled.
+
+With `soft=true` (*soft* knockout), the `trigger` reaction rate is zeroed for
+each knocked-out gene, without recompiling the model.
 
 # Specification
 
-`{"{regulation/v1/knockout}": {"of": {"\$": "do"}, "genes": ["A"]}}`
+`{"{regulation/v1/knockout}": {"of": {"\$": "do"}, "genes": ["A"], "soft": false}}`
 """
 function knockout end
 
 knockout(specification::AbstractDict{Symbol}) = knockout(
     specification[:of];
-    genes = Symbol.(specification[:genes])
+    genes = Symbol.(specification[:genes]),
+    soft = get(specification, :soft, false),
 )
 
-knockout(model::Models.Wrapped; genes) = knockout(model.definition, model.model; genes)
-knockout(::Any, model::Models.Model; genes) = knockout(model; genes)
-
-# TODO: don't rebuild entire model, instead edit existing reaction system/jump model.
-# question is whether Catalyst offers any kind of API for that.
-knockout(definition::Definition, ::Models.Model; genes) = build(knockout(definition; genes))
+function knockout(model::Models.Wrapped; genes, soft=false)
+    if soft
+        Models.remake(model, Dict(parameter_name(g, :trigger) => 0.0 for g in genes))
+    else
+        knockout(model.definition, model.model; genes)
+    end
+end
+knockout(::Any, model::Models.Model; genes, soft=false) = knockout(model; genes, soft)
+knockout(definition::Definition, ::Models.Model; genes, soft=false) = build(knockout(definition; genes))
 
 function knockout(definition::Definition; genes)
     knocked_out = Set(genes)
