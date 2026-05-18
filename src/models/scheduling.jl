@@ -439,7 +439,7 @@ function (f!::Schedule{Scope})(x, Δt::Float64; context...)
     x
 end
 
-function (f!::Schedule{<:Sequence})(x, Δt::Float64; context...)
+function (f!::Schedule{<:Sequence})(x, Δt::Float64; parallel = Threads.nthreads() > 1, context...)
     path = f!.branch ? f!.path : "$(f!.path)-"
     @logmsg Progress :preparing at = path
 
@@ -448,22 +448,26 @@ function (f!::Schedule{<:Sequence})(x, Δt::Float64; context...)
 
     @logmsg Progress :iterating at = path todo = length(steps)
     if f!.branch
-        parent_rng = Models.randomness(x)
-        x = Branched(x)
-        for (i, step!) in enumerate(steps)
-            # maybe it's better to set the randomness inside `adapt!`?
-            # also this already incurs a copy of the state by projecting into a FlatState
-            x′ = FlatState(x.stem)
-            x′.randomness = Models.child_rng(parent_rng, i)
-            x′ = Models.adapt!(x′, step!, copy = true)
-            x′ = step!(x′, Inf; context..., path = "$path$i")
-            push!(x.branches, x′)
-            @logmsg Progress :iterating at = path done = i
+        parent_seed = rand(Models.randomness(x), UInt64)
+        branches = Vector{Any}(undef, length(steps))
+        @sync for (i, step!) in enumerate(collect(steps))
+            task = () -> begin
+                # maybe it's better to set the randomness inside `adapt!`?
+                # also this already incurs a copy of the state by projecting into a FlatState
+                x′ = FlatState(x)
+                x′.randomness = Xoshiro(hash((parent_seed, i)))
+                x′ = Models.adapt!(x′, step!, copy = true)
+                x′ = step!(x′, Inf; context..., parallel, path = "$path$i")
+                branches[i] = x′
+                @logmsg Progress :iterating at = path done = i
+            end
+            parallel ? Threads.@spawn(task()) : task()
         end
+        x = Branched(x, branches)
     else
         for (i, step!) in enumerate(steps)
             current = Models.t(x)
-            x = step!(x, Δt; context..., path = "$path$i")
+            x = step!(x, Δt; context..., parallel, path = "$path$i")
             Δt -= Models.t(x) - current
             @logmsg Progress :iterating at = path done = i
         end
