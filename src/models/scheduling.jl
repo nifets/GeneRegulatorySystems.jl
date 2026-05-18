@@ -448,9 +448,14 @@ function (f!::Schedule{<:Sequence})(x, Δt::Float64; context...)
 
     @logmsg Progress :iterating at = path todo = length(steps)
     if f!.branch
+        parent_rng = Models.randomness(x)
         x = Branched(x)
         for (i, step!) in enumerate(steps)
-            x′ = Models.adapt!(x.stem, step!, copy = true)
+            # maybe it's better to set the randomness inside `adapt!`?
+            # also this already incurs a copy of the state by projecting into a FlatState
+            x′ = FlatState(x.stem)
+            x′.randomness = Models.child_rng(parent_rng, i)
+            x′ = Models.adapt!(x′, step!, copy = true)
             x′ = step!(x′, Inf; context..., path = "$path$i")
             push!(x.branches, x′)
             @logmsg Progress :iterating at = path done = i

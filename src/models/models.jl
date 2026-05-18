@@ -53,6 +53,9 @@ function randomness end
 randomness(x::FlatState) = x.randomness
 randomness(x::Branched) = randomness(x.stem)
 
+child_rng(parent, i) = Xoshiro(hash((rand(parent, UInt64), i)))
+
+
 """
     Model{State}
 
