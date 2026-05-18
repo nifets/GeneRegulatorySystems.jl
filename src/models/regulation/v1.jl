@@ -565,16 +565,124 @@ species_reference(name::Symbol; t, genes) =
 # n < 0. Since X may become (and often initially is) 0, this restricts what both
 # K (which here is the activation/repression half-activation concentration) and
 # n may be specified as by the user. To allow both of these violations in the
-# limit case, we define a slightly more flexible hill function. This definition
-# would not work correctly if K were symbolic (because then
-# iszero(K) === false), but in our case it isn't.
-hill2(X, v, K, n) = v / (1.0 + ifelse(iszero(K), 0.0, K / X) ^ n)
+# limit case, we define a slightly more flexible hill function.
+safe_div(K::Real, X::Real) = iszero(K) ? zero(K / X) : K / X
+# Allow hill2 to also work with symbolic K
+@register_symbolic safe_div(K, X)
+
+hill2(X, v, K, n) = v / (1.0 + safe_div(K, X) ^ n)
+
+"""
+    parameter_name(gene::Symbol, kind::Symbol)
+    parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol)
+    parameter_name(i::Int, kind::Symbol)
+
+The canonical symbol used for a V1 parameter. The three forms cover the three
+parameter roles in V1:
+- `(gene, kind)` — per-gene base rate (`gene.transcription`, `gene.activation`, …)
+- `(gene, kind, from, field)` — regulation slot field (`gene.activation.from.at`,
+  `gene.proteolysis.from.k`)
+- `(i, kind)` — auxilary reaction rate constant (`reaction.1.k⁺`, `reaction.1.k₋`)
+"""
+parameter_name(gene::Symbol, kind::Symbol) = Symbol("$(gene).$(kind)")
+parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol) =
+    Symbol("$(gene).$(kind).$(from).$(field)")
+parameter_name(i::Int, kind::Symbol) = Symbol("reaction.$(i).$(kind)")
+
+make_parameter(name::Symbol) = ModelingToolkit.toparam(Symbolics.variable(name))
+make_parameter(name::Symbol, default::Float64) = Symbolics.setmetadata(make_parameter(name), Symbolics.VariableDefaultValue, default)
+
+function each_parameter(callback::Function, definition::Definition)
+    for g in definition.genes
+        for kind in fieldnames(typeof(g.base_rates))
+            callback(parameter_name(g.name, kind), getfield(g.base_rates, kind))
+        end
+        for slot in g.activation.slots
+            callback(parameter_name(g.name, :activation, slot.from, :at), slot.at)
+            callback(parameter_name(g.name, :activation, slot.from, :k),  slot.k)
+        end
+        for slot in g.repression.slots
+            callback(parameter_name(g.name, :repression, slot.from, :at), slot.at)
+            callback(parameter_name(g.name, :repression, slot.from, :k),  slot.k)
+        end
+        for slot in g.proteolysis.slots
+            callback(parameter_name(g.name, :proteolysis, slot.from, :k), slot.k)
+        end
+    end
+    for (i, rxn) in enumerate(definition.reactions)
+        callback(parameter_name(i, :k⁺), rxn.k₊)
+        callback(parameter_name(i, :k₋), rxn.k₋)
+    end
+end
+
+Models.parameters(definition::Definition) = let result = Dict{Symbol, Float64}()
+    each_parameter(definition) do name, default
+        result[name] = default
+    end
+    result
+end
+
+Models.remake(definition::Definition, parameters::AbstractDict{Symbol, <:Real}) = Definition(;
+    definition.polymerases,
+    definition.ribosomes,
+    definition.proteasomes,
+    genes=[Models.remake(g, parameters) for g in definition.genes],
+    reactions=[
+        Models.Reaction(;
+            rxn.from, rxn.to,
+            k₊ = get(parameters, parameter_name(i, :k⁺), rxn.k₊),
+            k₋ = get(parameters, parameter_name(i, :k₋), rxn.k₋),
+        )
+        for (i, rxn) in enumerate(definition.reactions)
+    ]
+)
+
+
+function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
+    T = typeof(gene.base_rates)
+    Gene(;
+        gene.name, gene.unique,
+        base_rates = T(; (
+            f => get(parameters, parameter_name(gene.name, f), getfield(gene.base_rates, f))
+            for f in fieldnames(T)
+        )...),
+        activation = Activation(;
+            gene.activation.aggregate,
+            slots = [
+                HillRegulator(; slot.from,
+                    at = get(parameters, parameter_name(gene.name, :activation, slot.from, :at), slot.at),
+                    k = get(parameters, parameter_name(gene.name, :activation, slot.from, :k), slot.k)
+                )
+                for slot in gene.activation.slots
+            ]
+        ),
+        repression = Repression(;
+            gene.repression.aggregate,
+            slots = [
+                HillRegulator(; slot.from,
+                    at = get(parameters, parameter_name(gene.name, :repression, slot.from, :at), slot.at),
+                    k = get(parameters, parameter_name(gene.name, :repression, slot.from, :k), slot.k)
+                )
+                for slot in gene.repression.slots
+            ]
+        ),
+        proteolysis = Proteolysis(;
+            slots = [
+                DirectRegulator(; slot.from,
+                    k = get(parameters, parameter_name(gene.name, :proteolysis, slot.from, :k), slot.k),
+                )
+                for slot in gene.proteolysis.slots
+            ]
+        ),
+    )
+end
 
 function regulation(
     genes::Dict{Symbol,<:ModelingToolkit.AbstractSystem};
     definition::Definition,
     t::Num,
 )
+
     inactive(target::Gene) =
         if target.unique
             1 - genes[target.name].active
@@ -584,25 +692,29 @@ function regulation(
 
     activation_rate(target::Gene) = (
         inactive(target)
-        * target.base_rates.activation
+        * make_parameter(parameter_name(target.name, :activation), target.base_rates.activation)
         * target.repression(
             (  # ^ arguments and value go towards 0 as repression increases
-                hill2(species_reference(from; t, genes), 1.0, at, k)
+                hill2(species_reference(from; t, genes), 1.0,
+                    make_parameter(parameter_name(target.name, :repression, from, :at), at),
+                    make_parameter(parameter_name(target.name, :repression, from, :k), k))
                 for (; from, k, at) in target.repression.slots
             );
-            T = Num
+            T=Num
         )
     )
 
     deactivation_rate(target::Gene) = (
         genes[target.name].active
-        * target.base_rates.deactivation
+        * make_parameter(parameter_name(target.name, :deactivation), target.base_rates.deactivation)
         * target.activation(
             (  # ^ arguments and value go towards 0 as activation increases
-                hill2(species_reference(from; t, genes), 1.0, at, k)
+                hill2(species_reference(from; t, genes), 1.0,
+                    make_parameter(parameter_name(target.name, :activation, from, :at), at),
+                    make_parameter(parameter_name(target.name, :activation, from, :k), k))
                 for (; from, k, at) in target.activation.slots
             );
-            T = Num
+            T=Num
         )
     )
 
@@ -631,14 +743,15 @@ function regulation(
                 map(target.proteolysis.slots) do (; from, k)
                     proteases = species_reference(from; t, genes)
                     proteins = genes[target.name].proteins
+                    k_symbolic = make_parameter(parameter_name(target.name, :proteolysis, from, :k), k)
 
                     if from == target.name
                         # This is a loop in the proteolysis repression network
                         # and means that the protein decays without another
                         # protease.
-                        Reaction(k, [proteins], [proteins], [2], [1])
+                        Reaction(k_symbolic, [proteins], [proteins], [2], [1])
                     else
-                        Reaction(k, [proteases, proteins], [proteases])
+                        Reaction(k_symbolic, [proteases, proteins], [proteases])
                     end
                 end
             ]
@@ -649,25 +762,26 @@ function regulation(
         # their rate is nonzero.
         [
             Reaction(
-                k₊,
+                # need to use :k⁺ instead of :k₊ because ₊ is used as a scope separator in MTK
+                make_parameter(parameter_name(i, :k⁺), k₊),
                 species_reference.(keys(from.counts); t, genes),
                 species_reference.(keys(to.counts); t, genes),
                 collect(values(from.counts)),
                 collect(values(to.counts)),
             )
-            for (; from, k₊, to) in definition.reactions
+            for (i, (; from, k₊, to)) in enumerate(definition.reactions)
             if k₊ > 0.0
         ]
 
         [
             Reaction(
-                k₋,
+                make_parameter(parameter_name(i, :k₋), k₋),
                 species_reference.(keys(to.counts); t, genes),
                 species_reference.(keys(from.counts); t, genes),
                 collect(values(to.counts)),
                 collect(values(from.counts)),
             )
-            for (; from, k₋, to) in definition.reactions
+            for (i, (; from, k₋, to)) in enumerate(definition.reactions)
             if k₋ > 0.0
         ]
     ]
@@ -752,10 +866,17 @@ function build(definition::Definition; method::Symbol = :default)
         )
         for g in definition.genes
     )
+
     @named reaction_system = ReactionSystem(
         regulation(genes; definition, t),
         t,
-        systems = collect(values(genes)),
+        systems=collect(values(genes)),
+        initial_conditions=Dict(
+            getproperty(genes[g.name], kind) => getfield(g.base_rates, kind)
+            for g in definition.genes
+            for kind in fieldnames(typeof(g.base_rates))
+            if kind ∉ (:activation, :deactivation)
+        )
     )
     reaction_system = complete(reaction_system)
 
@@ -764,15 +885,8 @@ function build(definition::Definition; method::Symbol = :default)
         model = Models.Wrapped(
             definition = reaction_system,
             model = SciML.JumpModel(
-                system = complete(jump_model(reaction_system)),
-                method = pick_method(reaction_system; method)(),
-                parameters = [
-                    getproperty(genes[g.name], kind) =>
-                        getfield(g.base_rates, kind)
-                    for g in definition.genes
-                    for kind in fieldnames(typeof(g.base_rates))
-                    if kind ∉ (:activation, :deactivation)
-                ],
+                complete(jump_model(reaction_system)),
+                pick_method(reaction_system; method)()
             ),
         ),
     )
