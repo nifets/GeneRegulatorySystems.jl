@@ -656,7 +656,7 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
                 for slot in gene.activation.slots
             ]
         ),
-        repression = Activation(;
+        repression = Repression(;
             gene.repression.aggregate,
             slots = [
                 HillRegulator(; slot.from,
