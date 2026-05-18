@@ -120,14 +120,20 @@ by `each_event` for output in sparse long format.
 	template::JumpProcesses.JumpProblem
 end
 
+# SymbolicUtils hash consing is thread unsafe
+# https://github.com/SciML/ModelingToolkit.jl/issues/3315
+const JUMP_PROBLEM_LOCK = ReentrantLock()
+
 JumpModel(system::ModelingToolkit.System, method::JumpProcesses.AbstractAggregatorAlgorithm) =
-    JumpModel(template = ModelingToolkit.JumpProblem(
-        system,
-        [s => 0 for s in ModelingToolkit.unknowns(system)],
-        (0.0, Inf),
-        aggregator = method,
-        u0_eltype = Int,
-    ))
+    lock(JUMP_PROBLEM_LOCK) do
+        JumpModel(template = ModelingToolkit.JumpProblem(
+            system,
+            [s => 0 for s in ModelingToolkit.unknowns(system)],
+            (0.0, Inf),
+            aggregator = method,
+            u0_eltype = Int,
+        ))
+    end
 
 system(f!::JumpModel) = f!.template.prob.f.sys
 method(f!::JumpModel) = f!.template.aggregator
