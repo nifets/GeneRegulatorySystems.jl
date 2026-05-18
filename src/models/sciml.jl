@@ -58,6 +58,7 @@ corresponding `f!`.
 		problem,
 		JumpProcesses.SSAStepper(),
 		save_start = false,
+        seed = rand(problem.rng, UInt64),
 		callback = JumpProcesses.DiscreteCallback(
 			TriggerProgress(),
 			EmitProgress(),
