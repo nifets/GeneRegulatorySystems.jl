@@ -341,7 +341,7 @@ function simulate!(; location, progress, dry)
         state = Models.FlatState()
         state = Models.Plumbing.Seed(specification[:seed])(state)
         sink = Sink(; location)
-        schedule!(state; load, trace = sink, dryrun = dry ? dryrun : nothing)
+        schedule!(state; load, trace = sink, dryrun = dry ? dryrun : nothing, dense = true)
         flush!(sink)
     end
 end

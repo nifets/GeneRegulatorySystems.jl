@@ -99,7 +99,7 @@ In JSON, `JumpModel`s can only be defined indirectly, such as via
 
 # Invocation
 
-	(f!::JumpModel)(x::JumpState, Δt::Float64; record = false, _...)
+	(f!::JumpModel)(x::JumpState, Δt::Float64; dense = false, _...)
 
 Advance the simulation by applying the stochastic dynamics `f!` to `x` for `Δt`
 time units, realizing a segment of the state trajectory.
@@ -238,7 +238,7 @@ function Models.each_event(callback::Function, x::JumpState)
 	end
 end
 
-function (f!::JumpModel)(x::JumpState, Δt::Float64; record = false, _...)
+function (f!::JumpModel)(x::JumpState, Δt::Float64; dense = false, _...)
 	f! === x.f! || error("incompatible JumpState, must call adapt!(x, f!)")
 	isfinite(Δt) || error("cannot do this forever")
 
@@ -247,11 +247,15 @@ function (f!::JumpModel)(x::JumpState, Δt::Float64; record = false, _...)
 	x.integrator.opts.callback.discrete_callbacks[1].affect!.t0 = Models.t(x)
 
 	@logmsg Progress :stepping at = "JumpModel" todo = Δt
-	if record
+	if dense
+		# Save every jump event into sol.u (for trajectory consumers like ExperimentTool).
+		# Under active SSA dynamics this can allocate gigabytes per segment.
 		x.integrator.save_everystep = true
 		ModelingToolkit.savevalues!(x.integrator, true)
 		ModelingToolkit.step!(x.integrator, Δt, true)
 	else
+		# Only retain the segment-end state. Sufficient when consumers read just the
+		# current state (e.g. via FlatState) rather than iterating sol.u.
 		x.integrator.save_everystep = false
 		ModelingToolkit.step!(x.integrator, Δt, true)
 		ModelingToolkit.savevalues!(x.integrator, true)
