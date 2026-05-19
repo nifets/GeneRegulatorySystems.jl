@@ -448,7 +448,7 @@ function (f!::Schedule{<:Sequence})(x, Δt::Float64; parallel = Threads.nthreads
 
     @logmsg Progress :iterating at = path todo = length(steps)
     if f!.branch
-        parent_seed = rand(Models.randomness(x), UInt64)
+        parent_seed = GeneRegulatorySystems.seed(Models.randomness(x))
         branches = Vector{Any}(undef, length(steps))
         @sync for (i, step!) in enumerate(collect(steps))
             task = () -> begin

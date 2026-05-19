@@ -1,9 +1,11 @@
 module SciML
 
+using ...GeneRegulatorySystems: GeneRegulatorySystems
 import ..Models: Models, Model, FlatState
 import Catalyst
 import JumpProcesses
 import ModelingToolkit
+
 
 using Random
 using Logging: LogLevel, @logmsg
@@ -58,7 +60,7 @@ corresponding `f!`.
 		problem,
 		JumpProcesses.SSAStepper(),
 		save_start = false,
-        seed = rand(problem.rng, UInt64),
+        seed = GeneRegulatorySystems.seed(problem.rng),
         alias_jump = false,
 		callback = JumpProcesses.DiscreteCallback(
 			TriggerProgress(),
