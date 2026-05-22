@@ -49,7 +49,7 @@ contained in the integrator, while the random number generator is part of the
 problem object.
 
 To be compatible with a `JumpModel` `f!`, the `JumpState`'s `problem` (and
-`integrator`) must have been constructed by remaking `f!.template`. To check
+`integrator`) must have been constructed by remaking `f!.problem`. To check
 whether this is actually the case, `JumpState` also contains a reference to the
 corresponding `f!`.
 """
@@ -88,7 +88,7 @@ FlatState(x::JumpState) = FlatState(
 	JumpModel <: Model{JumpState}
 
 Represents the stochastic dynamics of a compiled `JumpProcesses.JumpProblem`
-`template`. The template is built once from a `ModelingToolkit.System` and a `JumpProcesses.AbstractAggregatorAlgorithm` method.
+`problem`. The problem is built once from a `ModelingToolkit.System` and a `JumpProcesses.AbstractAggregatorAlgorithm` method.
 
 Gene regulation models in this package ultimately get compiled to `JumpModel`s.
 
@@ -105,7 +105,7 @@ Advance the simulation by applying the stochastic dynamics `f!` to `x` for `Δt`
 time units, realizing a segment of the state trajectory.
 
 `x` must be compatible with `f!`, that is, the `JumpProcesses.JumpProblem` (and
-corresponding integrator) in `x` must have been produced by remaking `f!.template`.
+corresponding integrator) in `x` must have been produced by remaking `f!.problem`.
 This is conservatively checked as `f! === x.f!`. If necessary, users can call
 `adapt!(x, f!)` to convert `x` appropriately.
 
@@ -119,7 +119,7 @@ the recorded trajectory information is highly redundant and needs to be filtered
 by `each_event` for output in sparse long format.
 """
 @kwdef struct JumpModel <: Model{JumpState}
-	template::JumpProcesses.JumpProblem
+	problem::JumpProcesses.JumpProblem
 end
 
 # SymbolicUtils hash consing is thread unsafe
@@ -128,7 +128,7 @@ const JUMP_PROBLEM_LOCK = ReentrantLock()
 
 JumpModel(system::ModelingToolkit.System, method::JumpProcesses.AbstractAggregatorAlgorithm) =
     lock(JUMP_PROBLEM_LOCK) do
-        JumpModel(template = ModelingToolkit.JumpProblem(
+        JumpModel(problem = ModelingToolkit.JumpProblem(
             system,
             [s => 0 for s in ModelingToolkit.unknowns(system)],
             (0.0, Inf),
@@ -137,13 +137,13 @@ JumpModel(system::ModelingToolkit.System, method::JumpProcesses.AbstractAggregat
         ))
     end
 
-system(f!::JumpModel) = f!.template.prob.f.sys
-method(f!::JumpModel) = f!.template.aggregator
+system(f!::JumpModel) = f!.problem.prob.f.sys
+method(f!::JumpModel) = f!.problem.aggregator
 
-variable_symbols(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.variable_symbols(f!.template)
-parameter_symbols(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.parameter_symbols(f!.template)
+variable_symbols(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.variable_symbols(f!.problem)
+parameter_symbols(f!::JumpModel) = ModelingToolkit.SymbolicIndexingInterface.parameter_symbols(f!.problem)
 
-Base.getindex(f!::JumpModel, s) = f!.template.ps[s]
+Base.getindex(f!::JumpModel, s) = f!.problem.ps[s]
 
 Models.parameters(f!::JumpModel) = Dict(
 	normalize_name(s) => f![s] for s in parameter_symbols(f!)
@@ -168,8 +168,8 @@ Models.adapt!(x::JumpState, f!::JumpModel, ::Val{Copy}) where {Copy} =
 	end
 
 Models.adapt!(x::FlatState, f!::JumpModel, _copy) = JumpState(
-    # because we are only modifying u0 here and not p, f!.template is not mutated.
-    problem = with_rng(JumpProcesses.remake(f!.template;
+    # because we are only modifying u0 here and not p, f!.problem is not mutated.
+    problem = with_rng(JumpProcesses.remake(f!.problem;
         u0 = [
             s => get(x.counts, normalize_name(s), 0)
  			for s in variable_symbols(f!)
@@ -202,12 +202,11 @@ function remake_p(jp::JumpProcesses.JumpProblem; p)
 end
 
 Models.remake(f!::JumpModel, parameters::AbstractDict{Symbol, <:Real}) = JumpModel(
-    template = remake_p(f!.template; p = [
+    problem = remake_p(f!.problem; p = [
         s => get(parameters, normalize_name(s), f![s])
         for s in parameter_symbols(f!)
     ])
 )
-
 
 function Models.each_event(callback::Function, x::JumpState)
 	solution = x.integrator.sol
