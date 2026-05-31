@@ -572,46 +572,29 @@ safe_div(K::Real, X::Real) = iszero(K) ? zero(K / X) : K / X
 
 hill2(X, v, K, n) = v / (1.0 + safe_div(K, X) ^ n)
 
-"""
-    parameter_name(gene::Symbol, kind::Symbol)
-    parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol)
-    parameter_name(i::Int, kind::Symbol)
-
-The canonical symbol used for a V1 parameter. The three forms cover the three
-parameter roles in V1:
-- `(gene, kind)` — per-gene base rate (`gene.transcription`, `gene.activation`, …)
-- `(gene, kind, from, field)` — regulation slot field (`gene.activation.from.at`,
-  `gene.proteolysis.from.k`)
-- `(i, kind)` — auxilary reaction rate constant (`reaction.1.k⁺`, `reaction.1.k₋`)
-"""
-parameter_name(gene::Symbol, kind::Symbol) = Symbol("$(gene).$(kind)")
-parameter_name(gene::Symbol, kind::Symbol, from::Symbol, field::Symbol) =
-    Symbol("$(gene).$(kind).$(from).$(field)")
-parameter_name(i::Int, kind::Symbol) = Symbol("reaction.$(i).$(kind)")
-
 make_parameter(name::Symbol) = ModelingToolkit.toparam(Symbolics.variable(name))
 make_parameter(name::Symbol, default::Float64) = Symbolics.setmetadata(make_parameter(name), Symbolics.VariableDefaultValue, default)
 
 function each_parameter(callback::Function, definition::Definition)
     for g in definition.genes
         for kind in fieldnames(typeof(g.base_rates))
-            callback(parameter_name(g.name, kind), getfield(g.base_rates, kind))
+            callback(Symbol("$(g.name).$(kind)"), getfield(g.base_rates, kind))
         end
         for slot in g.activation.slots
-            callback(parameter_name(g.name, :activation, slot.from, :at), slot.at)
-            callback(parameter_name(g.name, :activation, slot.from, :k),  slot.k)
+            callback(Symbol("$(g.name).activation.$(slot.from).at"), slot.at)
+            callback(Symbol("$(g.name).activation.$(slot.from).k"),  slot.k)
         end
         for slot in g.repression.slots
-            callback(parameter_name(g.name, :repression, slot.from, :at), slot.at)
-            callback(parameter_name(g.name, :repression, slot.from, :k),  slot.k)
+            callback(Symbol("$(g.name).repression.$(slot.from).at"), slot.at)
+            callback(Symbol("$(g.name).repression.$(slot.from).k"),  slot.k)
         end
         for slot in g.proteolysis.slots
-            callback(parameter_name(g.name, :proteolysis, slot.from, :k), slot.k)
+            callback(Symbol("$(g.name).proteolysis.$(slot.from).k"), slot.k)
         end
     end
-    for (i, rxn) in enumerate(definition.reactions)
-        callback(parameter_name(i, :k⁺), rxn.k₊)
-        callback(parameter_name(i, :k₋), rxn.k₋)
+    for rxn in definition.reactions
+        callback(Symbol("reaction.$(rxn.name).k⁺"), rxn.k₊)
+        callback(Symbol("reaction.$(rxn.name).k₋"), rxn.k₋)
     end
 end
 
@@ -629,11 +612,11 @@ Models.remake(definition::Definition, parameters::AbstractDict{Symbol, <:Real}) 
     genes=[Models.remake(g, parameters) for g in definition.genes],
     reactions=[
         Models.Reaction(;
-            rxn.from, rxn.to,
-            k₊ = get(parameters, parameter_name(i, :k⁺), rxn.k₊),
-            k₋ = get(parameters, parameter_name(i, :k₋), rxn.k₋),
+            rxn.name, rxn.from, rxn.to,
+            k₊ = get(parameters, Symbol("reaction.$(rxn.name).k⁺"), rxn.k₊),
+            k₋ = get(parameters, Symbol("reaction.$(rxn.name).k₋"), rxn.k₋),
         )
-        for (i, rxn) in enumerate(definition.reactions)
+        for rxn in definition.reactions
     ]
 )
 
@@ -643,15 +626,15 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
     Gene(;
         gene.name, gene.unique,
         base_rates = T(; (
-            f => get(parameters, parameter_name(gene.name, f), getfield(gene.base_rates, f))
+            f => get(parameters, Symbol("$(gene.name).$(f)"), getfield(gene.base_rates, f))
             for f in fieldnames(T)
         )...),
         activation = Activation(;
             gene.activation.aggregate,
             slots = [
                 HillRegulator(; slot.from,
-                    at = get(parameters, parameter_name(gene.name, :activation, slot.from, :at), slot.at),
-                    k = get(parameters, parameter_name(gene.name, :activation, slot.from, :k), slot.k)
+                    at = get(parameters, Symbol("$(gene.name).activation.$(slot.from).at"), slot.at),
+                    k = get(parameters, Symbol("$(gene.name).activation.$(slot.from).k"), slot.k)
                 )
                 for slot in gene.activation.slots
             ]
@@ -660,8 +643,8 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
             gene.repression.aggregate,
             slots = [
                 HillRegulator(; slot.from,
-                    at = get(parameters, parameter_name(gene.name, :repression, slot.from, :at), slot.at),
-                    k = get(parameters, parameter_name(gene.name, :repression, slot.from, :k), slot.k)
+                    at = get(parameters, Symbol("$(gene.name).repression.$(slot.from).at"), slot.at),
+                    k = get(parameters, Symbol("$(gene.name).repression.$(slot.from).k"), slot.k)
                 )
                 for slot in gene.repression.slots
             ]
@@ -669,7 +652,7 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
         proteolysis = Proteolysis(;
             slots = [
                 DirectRegulator(; slot.from,
-                    k = get(parameters, parameter_name(gene.name, :proteolysis, slot.from, :k), slot.k),
+                    k = get(parameters, Symbol("$(gene.name).proteolysis.$(slot.from).k"), slot.k),
                 )
                 for slot in gene.proteolysis.slots
             ]
@@ -692,12 +675,12 @@ function regulation(
 
     activation_rate(target::Gene) = (
         inactive(target)
-        * make_parameter(parameter_name(target.name, :activation), target.base_rates.activation)
+        * make_parameter(Symbol("$(target.name).activation"), target.base_rates.activation)
         * target.repression(
             (  # ^ arguments and value go towards 0 as repression increases
                 hill2(species_reference(from; t, genes), 1.0,
-                    make_parameter(parameter_name(target.name, :repression, from, :at), at),
-                    make_parameter(parameter_name(target.name, :repression, from, :k), k))
+                    make_parameter(Symbol("$(target.name).repression.$(from).at"), at),
+                    make_parameter(Symbol("$(target.name).repression.$(from).k"), k))
                 for (; from, k, at) in target.repression.slots
             );
             T=Num
@@ -706,12 +689,12 @@ function regulation(
 
     deactivation_rate(target::Gene) = (
         genes[target.name].active
-        * make_parameter(parameter_name(target.name, :deactivation), target.base_rates.deactivation)
+        * make_parameter(Symbol("$(target.name).deactivation"), target.base_rates.deactivation)
         * target.activation(
             (  # ^ arguments and value go towards 0 as activation increases
                 hill2(species_reference(from; t, genes), 1.0,
-                    make_parameter(parameter_name(target.name, :activation, from, :at), at),
-                    make_parameter(parameter_name(target.name, :activation, from, :k), k))
+                    make_parameter(Symbol("$(target.name).activation.$(from).at"), at),
+                    make_parameter(Symbol("$(target.name).activation.$(from).k"), k))
                 for (; from, k, at) in target.activation.slots
             );
             T=Num
@@ -743,7 +726,7 @@ function regulation(
                 map(target.proteolysis.slots) do (; from, k)
                     proteases = species_reference(from; t, genes)
                     proteins = genes[target.name].proteins
-                    k_symbolic = make_parameter(parameter_name(target.name, :proteolysis, from, :k), k)
+                    k_symbolic = make_parameter(Symbol("$(target.name).proteolysis.$(from).k"), k)
 
                     if from == target.name
                         # This is a loop in the proteolysis repression network
@@ -763,25 +746,25 @@ function regulation(
         [
             Reaction(
                 # need to use :k⁺ instead of :k₊ because ₊ is used as a scope separator in MTK
-                make_parameter(parameter_name(i, :k⁺), k₊),
+                make_parameter(Symbol("reaction.$(name).k⁺"), k₊),
                 species_reference.(keys(from.counts); t, genes),
                 species_reference.(keys(to.counts); t, genes),
                 collect(values(from.counts)),
                 collect(values(to.counts)),
             )
-            for (i, (; from, k₊, to)) in enumerate(definition.reactions)
+            for (; name, from, k₊, to) in definition.reactions
             if k₊ > 0.0
         ]
 
         [
             Reaction(
-                make_parameter(parameter_name(i, :k₋), k₋),
+                make_parameter(Symbol("reaction.$(name).k₋"), k₋),
                 species_reference.(keys(to.counts); t, genes),
                 species_reference.(keys(from.counts); t, genes),
                 collect(values(to.counts)),
                 collect(values(from.counts)),
             )
-            for (i, (; from, k₋, to)) in enumerate(definition.reactions)
+            for (; name, from, k₋, to) in definition.reactions
             if k₋ > 0.0
         ]
     ]
@@ -851,6 +834,12 @@ function build(definition::Definition; method::Symbol = :default)
     allequal(typeof.(definition.genes)) ||
         error("mixing eukaryotic and prokaryotic genes is forbidden")
 
+    let names = [rxn.name for rxn in definition.reactions]
+        duplicates = unique([n for n in names if count(==(n), names) > 1])
+        isempty(duplicates) ||
+            error("reaction names must be unique; duplicated: ", join(duplicates, ", "))
+    end
+
     t = default_t()
     polymerases = species_variable(definition.polymerases; t)
     ribosomes = species_variable(definition.ribosomes; t)
@@ -919,7 +908,7 @@ knockout(specification::AbstractDict{Symbol}) = knockout(
 
 function knockout(model::Models.Wrapped; genes, soft=false)
     if soft
-        Models.remake(model, Dict(parameter_name(g, :trigger) => 0.0 for g in genes))
+        Models.remake(model, Dict(Symbol("$(g).trigger") => 0.0 for g in genes))
     else
         knockout(model.definition, model.model; genes)
     end

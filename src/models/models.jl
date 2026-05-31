@@ -280,6 +280,7 @@ part of a model.
 In JSON, a `Reaction` is specified as a JSON object
 ```
 {
+    "name": <name>,
     "from": <from>,
     "to": <to>,
     "rates": [<forward>, <reverse>]
@@ -289,6 +290,10 @@ where `<from>` and `<to>` each specify [`Reagents`](@ref) defining the (integer)
 stoichiometries respectively for the reactants and products (of the forward
 reaction), and `<forward>` and `<reverse>` must be JSON numbers defining the
 corresponding rate constants.
+
+If present, `<name>` must be a JSON string identifying the reaction, otherwise it
+will be set automatically to `"rxn-<i>"` using the reaction's index
+within its containing list. Names must be unique within a model.
 
 For example,
 ```
@@ -304,11 +309,21 @@ As a convenience, `"rates": [<forward>, <reverse>]` may alternatively by written
 as `"rate": <forward>`, setting `<reverse>` to zero.
 """
 @kwdef struct Reaction
+    name::Symbol
     from::Reagents = Reagents()
     to::Reagents = Reagents()
     k₊::Float64 = 0.0
     k₋::Float64 = 0.0
 end
+
+Specifications.cast(::Type{Vector{Reaction}}, xs::AbstractVector; context) = [
+    Specifications.cast(
+        Reaction,
+        merge(Dict(:name => "rxn-$i"), x);
+        context,
+    )
+    for (i, x) in enumerate(xs)
+]
 
 Specifications.cast(::Type{Reaction}, x::AbstractDict{Symbol}; context) =
     @invoke Specifications.cast(
@@ -339,6 +354,7 @@ end
 
 Specifications.representation(x::Reagents) = x.counts
 Specifications.representation(x::Reaction) = Dict{Symbol, Any}(
+    :name => Specifications.representation(x.name),
     :from => Specifications.representation(x.from),
     :to => Specifications.representation(x.to),
     :rates => [x.k₊, x.k₋]

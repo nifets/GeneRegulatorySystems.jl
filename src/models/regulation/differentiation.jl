@@ -300,7 +300,9 @@ function make_timer!(
         end
         from = Models.Reagents(Dict(timer.name => 2))
         to = Models.Reagents(Dict(Symbol("$(timer.name)_buffer") => 1))
-        push!(reactions, Models.Reaction(; from, to, k₊, k₋))
+        push!(reactions, Models.Reaction(;
+            name = Symbol("$(timer.name)_buffer"), from, to, k₊, k₋,
+        ))
     end
 
     genes[timer.name] = timer
