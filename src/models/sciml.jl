@@ -5,6 +5,7 @@ import ..Models: Models, Model, FlatState
 import Catalyst
 import JumpProcesses
 import ModelingToolkit
+import OrdinaryDiffEqRosenbrock
 
 
 using Random
@@ -260,6 +261,155 @@ function (f!::JumpModel)(x::JumpState, Δt::Float64; dense = false, _...)
 		ModelingToolkit.savevalues!(x.integrator, true)
 	end
 	@logmsg Progress :done at = "JumpModel"
+
+	x
+end
+
+"""
+	ODEState
+
+Holds the `ModelingToolkit.ODEProblem` `problem` and its `ODEIntegrator`
+`integrator`, advanced by an [`ODEModel`](@ref). Mirrors [`JumpState`](@ref).
+
+The model is deterministic, but the `Model`/`State` interface requires a random
+number generator to be present and aliased through `adapt!`, so `ODEState`
+carries the inbound `randomness` unchanged and never consumes it.
+"""
+@kwdef struct ODEState
+	f!::Model{ODEState}
+	problem::ModelingToolkit.ODEProblem
+	randomness::AbstractRNG = Random.Xoshiro()
+	integrator = ModelingToolkit.init(
+		problem,
+		f!.solver;
+		save_everystep = false,
+		save_start = false,
+		# Species are concentrations: reject any adaptive trial step that probes
+		# negative values. Without this the stiff solver evaluates Hill rate laws
+		# (and their Jacobian) at negative concentrations — fractional powers there
+		# return NaN and abort the solve at t=0.
+		isoutofdomain = (u, _p, _t) -> any(<(0), u),
+	)
+end
+
+"""
+	ODEModel <: Model{ODEState}
+
+Represents the deterministic **mean-field** dynamics of a regulation network
+compiled to a `ModelingToolkit.ODESystem` (via `convert(ODESystem, …)` on the
+`Catalyst.ReactionSystem`). It is the continuous sibling of [`JumpModel`](@ref):
+the same `Model`/`State` interface and schedule integration, advancing an
+`ODEIntegrator` by `Δt` instead of stepping an SSA.
+
+An ODE solve yields the mean trajectory only — there is no cell-to-cell variance.
+A recorded `ODEState` is therefore a population of one (mean = the value,
+variance = 0). This is intended: `ODEModel` is a fast, differentiable
+approximation of the network's mean behaviour, not a stochastic simulator.
+
+Selected through [`build`](@ref)'s `method` flag as `method = :ode`.
+"""
+@kwdef struct ODEModel <: Model{ODEState}
+	problem::ModelingToolkit.ODEProblem
+	solver = OrdinaryDiffEqRosenbrock.Rosenbrock23(autodiff = false)
+end
+
+# `system` is the `Catalyst.ReactionSystem` (or any system `ODEProblem` accepts);
+# `ODEProblem` builds the mean-field reaction-rate-equation ODE from it directly.
+# `build_initializeprob = false`: the reaction-rate ODE has no algebraic constraints, so MTK's
+# initialization system is spurious — and rebuilding it on each u0/p `remake` both wastes work
+# and trips an MTK codegen bug. We always supply explicit initial conditions, so skip it.
+ODEModel(system; solver = OrdinaryDiffEqRosenbrock.Rosenbrock23(autodiff = false), tspan = (0.0, Inf)) =
+	ODEModel(
+		problem = ModelingToolkit.ODEProblem(
+			system,
+			[s => 0.0 for s in ModelingToolkit.unknowns(system)],
+			tspan;
+			build_initializeprob = false,
+		),
+		solver = solver,
+	)
+
+Models.t(x::ODEState) = x.integrator.t
+Models.randomness(x::ODEState) = x.randomness
+
+FlatState(x::ODEState) = FlatState(
+	counts = Dict{Symbol, Real}(
+		normalize_name(s) => x.integrator[s]
+		for s in ModelingToolkit.SymbolicIndexingInterface.variable_symbols(
+			x.integrator
+		)
+	),
+	randomness = x.randomness;
+	x.integrator.t,
+)
+
+system(f!::ODEModel) = f!.problem.f.sys
+method(f!::ODEModel) = f!.solver
+
+variable_symbols(f!::ODEModel) = ModelingToolkit.SymbolicIndexingInterface.variable_symbols(f!.problem)
+parameter_symbols(f!::ODEModel) = ModelingToolkit.SymbolicIndexingInterface.parameter_symbols(f!.problem)
+
+Base.getindex(f!::ODEModel, s) = f!.problem.ps[s]
+
+# An ODE problem's parameter set includes MTK's auto-generated `Initial(x)` initialization
+# parameters alongside the genuine scalar rate constants. The former are composite call
+# expressions (`Initial` applied to a variable); the latter are leaf symbols. Only the leaves
+# are tunable model parameters, so restrict to those (a JumpProblem has no `Initial` params).
+tunable_parameters(f!::ODEModel) = Iterators.filter(
+	s -> !ModelingToolkit.iscall(s), parameter_symbols(f!)
+)
+
+Models.parameters(f!::ODEModel) = Dict(
+	normalize_name(s) => f![s] for s in tunable_parameters(f!)
+)
+
+Models.describe(::ODEModel) = Models.Label("SciML ODESystem")
+
+Models.adapt!(x::ODEState, f!::ODEModel, ::Val{Copy}) where {Copy} =
+	if x.f! === f! && !Copy
+		x
+	else
+		Models.adapt!(FlatState(x), f!)
+	end
+
+Models.adapt!(x::FlatState, f!::ODEModel, _copy) = ODEState(
+	# ODEProblem.remake has none of JumpProblem's aliasing landmines, so we can
+	# remake u0/tspan directly without the with_rng/remake_p workarounds.
+	problem = ModelingToolkit.remake(f!.problem;
+		u0 = [
+			s => Float64(get(x.counts, normalize_name(s), 0))
+			for s in variable_symbols(f!)
+		],
+		tspan = (x.t, Inf),
+		build_initializeprob = false,
+	),
+	randomness = x.randomness;
+	f!,
+)
+
+Models.remake(f!::ODEModel, parameters::AbstractDict{Symbol, <:Real}) = ODEModel(
+	problem = ModelingToolkit.remake(f!.problem; p = [
+		s => get(parameters, normalize_name(s), f![s])
+		for s in tunable_parameters(f!)
+	], build_initializeprob = false),
+	solver = f!.solver,
+)
+
+# Mean-field has no per-event history; emit the current (segment-end) state.
+function Models.each_event(callback::Function, x::ODEState)
+	t = x.integrator.t
+	for s in ModelingToolkit.SymbolicIndexingInterface.variable_symbols(x.integrator)
+		callback(t, normalize_name(s), x.integrator[s])
+	end
+end
+
+function (f!::ODEModel)(x::ODEState, Δt::Float64; _...)
+	f! === x.f! || error("incompatible ODEState, must call adapt!(x, f!)")
+	isfinite(Δt) || error("cannot do this forever")
+
+	@logmsg Progress :stepping at = "ODEModel" todo = Δt
+	ModelingToolkit.step!(x.integrator, Δt, true)
+	@logmsg Progress :done at = "ODEModel"
 
 	x
 end

@@ -873,10 +873,14 @@ function build(definition::Definition; method::Symbol = :default)
         definition,
         model = Models.Wrapped(
             definition = reaction_system,
-            model = SciML.JumpModel(
-                complete(jump_model(reaction_system)),
-                pick_method(reaction_system; method)()
-            ),
+            # `method = :ode` compiles the network to a deterministic mean-field
+            # ODE instead of an SSA; everything downstream is state-agnostic.
+            model = method === :ode ?
+                SciML.ODEModel(reaction_system) :
+                SciML.JumpModel(
+                    complete(jump_model(reaction_system)),
+                    pick_method(reaction_system; method)()
+                ),
         ),
     )
 end

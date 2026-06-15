@@ -13,14 +13,19 @@ const DEFAULTS = "$(@__DIR__)/defaults.specification.json"
 
 Represents species counts at a single time point.
 
-Counts are stored as a flat `Dict{Symbol, Int}` mapping dimension names to
+Counts are stored as a flat `Dict{Symbol, Real}` mapping dimension names to
 counts. For models that have dimensions associated with subsystems (such as
 genes in [`Models.V1`](@ref GeneRegulatorySystems.Models.V1)), the corresponding
 dimension names in `FlatState` are flattened by joining on `"."`.
+
+The value type is `Real` rather than `Int` so that both discrete (SSA / `Int`)
+and continuous mean-field (`ODEModel` / `Float64`) states share the same flat
+representation. The SSA path keeps storing `Int`s; only the mean-field ODE path
+populates it with `Float64` (where sub-1 species values are meaningful).
 """
 @kwdef mutable struct FlatState
     t::Float64 = 0.0
-    counts::Dict{Symbol, Int} = Dict{Symbol, Int}()
+    counts::Dict{Symbol, Real} = Dict{Symbol, Real}()
     randomness::AbstractRNG = Random.Xoshiro()
 end
 FlatState(x::FlatState) = FlatState(
