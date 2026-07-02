@@ -17,19 +17,37 @@ end
 GroupColors(::Nothing; _...) = GroupColors(Dict{String, Color}())
 GroupColors(
     groups::AbstractVector{String};
-    seed = [colorant"white", colorant"black", colorant"crimson"]
-) = GroupColors(
-    Dict(
-        zip(
-            groups,
-            Colors.distinguishable_colors(
-                length(groups),
-                seed,
-                dropseed = true
-            )
-        )
-    )
-)
+    reserved = [colorant"white", colorant"black", colorant"crimson"],
+    fixed = [
+        # Light group: In Oklch color space, starting with colorant"crimson",
+        # split the hue circle into 12 equidistant colors, increase luminosity
+        # (by 0.2 on the logit scale), then pick 8 colors manually.
+        colorant"#4196FF"
+        colorant"#3CBC0B"
+        colorant"#E38600"
+        colorant"#D864F1"
+        colorant"#A07CFF"
+        colorant"#00C1D3"
+        colorant"#A9A600"
+        colorant"#FB53B1"
+
+        # Dark group: Take the same 8 colors, shift their hue by -15° and
+        # decrease luminosity (by 0.5 on the logit scale).
+        colorant"#004D9D"
+        colorant"#335D00"
+        colorant"#8E2400"
+        colorant"#6C00AB"
+        colorant"#3D30AC"
+        colorant"#006A67"
+        colorant"#6B4900"
+        colorant"#8D007C"
+    ],
+    seed = vcat(reserved, fixed),
+    drop = length(reserved),
+) = GroupColors(Dict(zip(
+    groups,
+    Colors.distinguishable_colors(length(groups) + drop, seed)[(drop + 1):end]
+)))
 
 Base.getindex(colors::GroupColors, group::Symbol) = colors[string(group)]
 Base.getindex(colors::GroupColors, group::String) =

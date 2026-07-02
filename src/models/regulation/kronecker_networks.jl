@@ -9,7 +9,7 @@ parameters are sampled independently for each link.
 """
 module KroneckerNetworks
 
-using ...GeneRegulatorySystems: randomness, σ, logit
+using ...GeneRegulatorySystems: σ, logit
 using ..Models: Models, V1
 using ..Sampling: Nonnegative, BaseRatesTemplate
 import ..Specifications
@@ -20,6 +20,15 @@ using SparseArrays
 using Distributions
 using Kronecker
 using Roots
+
+function shadow_task_randomness!(callback, imposed::Random.Xoshiro)
+    hidden = Random.getstate(Random.default_rng())
+    Random.setstate!(Random.default_rng(), Random.getstate(imposed))
+    result = callback(Random.default_rng())
+    Random.setstate!(imposed, Random.getstate(Random.default_rng()))
+    Random.setstate!(Random.default_rng(), hidden)
+    result
+end
 
 """
     NetworkTemplate
@@ -194,6 +203,7 @@ contain a `"seed"` mapping if it is specified as part of a
     count::Int =
         first(size(@something(activation, repression, proteolysis).adjacency))
     prefix::String = ""
+    approximate::Union{Some{Bool}, Nothing} = nothing
 end
 
 """
@@ -222,7 +232,7 @@ end
 
 Models.describe(definition::Definition) = Models.Label("\
     'regulation/kronecker' definition with seed '$(definition.seed)' \
-    and $(definition.template.count)² initiators\
+    and a $(definition.template.count)×$(definition.template.count) expansion\
 ")
 
 gene_name(i; n, prefix) = Symbol("$prefix$(lpad(i, ndigits(n), '0'))")
@@ -255,27 +265,41 @@ regulation(::ProteolysisNetworkTemplate; slots::Vector{V1.DirectRegulator}) =
 function regulations(
     template::NetworkTemplate;
     n,
+    approximate,
     prefix,
     randomness::AbstractRNG,
 )
     size(template.adjacency) == (n, n) ||
-        error("invalid initiator: must have size ($n, $n)")
+        error("invalid expansion: Kronecker product must have size ($n, $n)")
     isprob(template.adjacency) ||
         error("invalid initiator: must be probabilities")
-    map(eachcol(template.adjacency)) do column
-        slots = [
-            regulator(template; from = gene_name(i; n, prefix), randomness)
-            for (i, cell) in enumerate(column)
-            if rand(randomness) < cell
-        ]
-        regulation(template; slots)
+
+    if approximate
+        realized =
+            shadow_task_randomness!(randomness) do randomness
+                fastsample(template.adjacency)
+            end
+        map(eachcol(realized)) do column
+            regulation(template, slots = [
+                regulator(template, from = gene_name(i; n, prefix); randomness)
+                for i in first(findnz(column))
+            ])
+        end
+    else
+        map(eachcol(template.adjacency)) do column
+            regulation(template, slots = [
+                regulator(template; from = gene_name(i; n, prefix), randomness)
+                for (i, cell) in enumerate(column)
+                if rand(randomness) < cell
+            ])
+        end
     end
 end
 
 adjacency(initiator::AbstractMatrix; k::Int) =
     k == 1 ? initiator : kronecker(initiator, k)
 adjacency(factors::AbstractVector) =
-    length(factors) == 1 ? first(factors) : kronecker(factors...)
+    length(factors) == 1 ? only(factors) : kronecker(factors...)
 
 adjusted(initiator::AbstractMatrix, α::Float64) = σ.(α .+ logit.(initiator))
 function adjusted(initiator::AbstractMatrix; k::Int, 𝔼links::Float64)
@@ -290,12 +314,12 @@ function adjusted(initiator::AbstractMatrix; k::Int, 𝔼links::Float64)
     adjusted(initiator, α₀)
 end
 
-factor(xs::AbstractVector) = vcat(adjoint.(xs)...)
+factor(xs::AbstractVector) = Float64.(mapreduce(adjoint, vcat, xs))
 
 function Specifications.cast(::Type{AbstractMatrix}, xs::AbstractVector; _...)
     factors = factor.(xs)
     result = adjacency(factors)
-    issquare(result) || error("adjacency must be square")
+    issquare(result) || error("expanded adjacency must be square")
     result
 end
 
@@ -316,33 +340,37 @@ end
 
 function Base.rand(randomness::AbstractRNG, template::Template)
     n = template.count
-    prefix = template.prefix
+    arguments = (;
+        approximate = @something(template.approximate, n > 16),
+        template.prefix,
+        randomness,
+    )
 
     activations =
         if isnothing(template.activation)
             [V1.Activation() for _ in 1:n]
         else
-            regulations(something(template.activation); n, prefix, randomness)
+            regulations(something(template.activation); n, arguments...)
         end
 
     repressions =
         if isnothing(template.repression)
             [V1.Repression() for _ in 1:n]
         else
-            regulations(something(template.repression); n, prefix, randomness)
+            regulations(something(template.repression); n, arguments...)
         end
 
     proteolyses =
         if isnothing(template.proteolysis)
             [V1.Proteolysis() for _ in 1:n]
         else
-            regulations(something(template.proteolysis); n, prefix, randomness)
+            regulations(something(template.proteolysis); n, arguments...)
         end
 
     V1.Definition(;
         genes = [
             V1.Gene(
-                name = gene_name(i; n, prefix),
+                name = gene_name(i; n, template.prefix),
                 base_rates = rand(randomness, template.base_rates);
                 activation,
                 repression,
@@ -398,7 +426,7 @@ build(definition::Definition; method::Symbol = :default) = Models.Wrapped(
     model = V1.build(
         # Deterministically fill in the template to create a concrete
         # V1.Definition from it:
-        rand(randomness(definition.seed), definition.template);
+        rand(Xoshiro(definition.seed), definition.template);
         method,
     );
     definition,

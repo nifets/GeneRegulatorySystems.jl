@@ -53,7 +53,7 @@ Similarly, it is possible to invoke multiple distinct extraction schemes on sepa
     {"{merge}": "+"}
 ]
 ```
-and it can for example be used to simulate a naive multi-omics protocol; see also [`Models.Plumbing.Merge`](@ref).
+and it can for example be used to simulate a naive multi-omics protocol; see also [`Models.Scheduling.Merge`](@ref).
 
 ## Counts resampling primitives
 

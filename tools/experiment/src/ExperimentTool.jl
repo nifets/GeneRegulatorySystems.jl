@@ -18,8 +18,7 @@ import Dates
 
 abstract type ProgressLogger <: AbstractLogger end
 
-Logging.min_enabled_level(::ProgressLogger) =
-    GeneRegulatorySystems.Scheduling.Progress
+Logging.min_enabled_level(::ProgressLogger) = Scheduling.Progress
 
 Logging.shouldlog(::ProgressLogger, level, module_, _group, _id) =
     level == Scheduling.Progress && (
@@ -67,7 +66,7 @@ function Logging.handle_message(
 
     id = get!(uuid4, logger.ids, at)
 
-    if message == :done || message == :advanced || message == :descending
+    if message == :done || message == :descending
         @info ProgressLogging.Progress(id, done = true, name = "$at $message")
         delete!(logger.ids, at)
         delete!(logger.todo, at)
@@ -159,16 +158,16 @@ function prepare!(; location, specifications, seed)
     else
         paths = realpath.(specifications)
         artifacts = map_artifacts(paths)
-        wrapped = [
+        wrapped = map(paths) do p
+            name = replace(artifacts[p], r"(\.schedule)?(\.json)$" => "")
+            filename = basename("$(location)$(artifacts[p])")
             Dict(
-                :< => basename("$(location)$(artifacts[p])"),
-                :into => "-" * replace(
-                    artifacts[p],
-                    r"(\.schedule)?(\.json)$" => "",
-                )
+                :< => filename,
+                :seed => "\${rootseed}-$name",
+                :into => "-$name",
+                :flush => true,
             )
-            for p in paths
-        ]
+        end
 
         mkpath(dirname(specification_path))
         for (source, target) in artifacts
@@ -179,12 +178,13 @@ function prepare!(; location, specifications, seed)
                 file,
                 merge(
                     Dict(
-                        :seed => seed,
+                        :rootseed => seed,
                         :_version => repository_version(),
                         :_julia_version => "v$VERSION",
                     ),
                     if length(wrapped) == 1
-                        Dict(:step => Dict(:< => only(wrapped)[:<]))
+                        s = only(wrapped)
+                        Dict(:step => Dict(:< => s[:<], :seed => s[:seed]))
                     else
                         Dict(:step => wrapped, :branch => true)
                     end,
@@ -210,13 +210,16 @@ end
     channels::Dict{String, Channel} = Dict{String, Channel}()
 end
 
-function flush!(sink::Sink)
+function flush!(sink::Sink; matching = nothing, finalize = false)
     sink.i > 0 || return
 
     for into in keys(sink.channels)
-        flush!(sink, into)
+        if matching === nothing || startswith(into, matching)
+            flush!(sink, into)
+        end
     end
 
+    finalize || return
     index = Tables.columntable(sink.index)
     Arrow.write(
         artifact(:index; prefix = sink.location),
@@ -229,12 +232,11 @@ function flush!(sink::Sink)
             label = Arrow.DictEncode(index.label),
             index.count,
             into = Arrow.DictEncode(index.into),
-            index.seed,
         )
     )
 end
 
-function flush!(sink::Sink, into)
+function flush!(sink::Sink, into::AbstractString)
     channel = pop!(sink.channels, into)
     filename = artifact(:events, into, prefix = sink.location)
     events = (;
@@ -243,16 +245,30 @@ function flush!(sink::Sink, into)
         name = channel.names,
         value = channel.values,
     )
+    count = length(events.t)
     if isfile(filename)
         Arrow.append(filename, events)
     else
         Arrow.write(filename, events, file = false)
     end
-    count = length(events.t)
     @logmsg(Scheduling.Progress, :saved, at = filename, done = count)
 end
 
-function (sink::Sink)(into, state; path, primitive!, from, seed, _...)
+function (sink::Sink)(; path, into = nothing, flush = nothing, _...)
+    @logmsg Scheduling.Progress :flushing at = path
+    matching = flush === true ? into : flush
+    matching !== nothing && flush!(sink; matching)
+end
+
+function (sink::Sink)(
+    state;
+    path,
+    from,
+    primitive!,
+    into = nothing,
+    consolidated_progress = nothing,
+    _...
+)
     sink.i += 1
 
     to = Models.t(state)
@@ -262,12 +278,16 @@ function (sink::Sink)(into, state; path, primitive!, from, seed, _...)
     if into === nothing
         push!(
             sink.index,
-            (; sink.i, path, from, to, model, label, count = 0, into = "", seed)
+            (; sink.i, path, from, to, model, label, count = 0, into = "")
         )
         return
     end
 
-    @logmsg Scheduling.Progress :collecting at = path todo = "into $into"
+    if consolidated_progress === nothing
+        @logmsg Scheduling.Progress :collecting at = path todo = "into $into"
+    else
+        consolidated_progress(:collecting, done = to)
+    end
     channel = get!(Channel, sink.channels, into)
     count = 0
     Models.each_event(state) do t::Float64, name::Symbol, value::Int64
@@ -285,7 +305,7 @@ function (sink::Sink)(into, state; path, primitive!, from, seed, _...)
     filename = basename(artifact(:events, into, prefix = sink.location))
     push!(
         sink.index,
-        (; sink.i, path, from, to, model, label, count, into = filename, seed),
+        (; sink.i, path, from, to, model, label, count, into = filename),
     )
 end
 
@@ -329,6 +349,7 @@ function simulate!(; location, progress, dry)
         bindings = Dict(
             :into => "",
             :channel => "",
+            :seed => "",
             :defaults => Models.load_defaults(),
         ),
     )
@@ -339,10 +360,9 @@ function simulate!(; location, progress, dry)
 
     with_progress(progress) do
         state = Models.FlatState()
-        state = Models.Plumbing.Seed(specification[:seed])(state)
         sink = Sink(; location)
-        schedule!(state; load, trace = sink, dryrun = dry ? dryrun : nothing, dense = true)
-        flush!(sink)
+        schedule!(state; load, trace = sink, dryrun = dry ? dryrun : nothing)
+        flush!(sink, finalize = true)
     end
 end
 

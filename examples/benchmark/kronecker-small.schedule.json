@@ -14,7 +14,7 @@
                 "to": 50000.0,
                 "step": 10.0,
                 "do": {"{regulation/kronecker}": {
-                    "seed": "kronecker-${seed}-${k}-${realization}",
+                    "seed": "kronecker-${rootseed}-${k}-${realization}",
                     "base_rates": {"$": ["defaults", "gene", "base_rates"]},
                     "activation": {
                         "adjacency": {

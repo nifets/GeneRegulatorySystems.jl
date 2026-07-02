@@ -41,7 +41,12 @@ settings() = @add_arg_table! ArgParseSettings(
 
     "--size", "-s"
         default = "1280x720"
-        help = "The initial resolution of the window."
+        help = "The initial size (in px) of the window."
+
+    "--ppi", "-r"
+        default = 96.0
+        arg_type = Float64
+        help = "The resolution (per 96px) to use when saving the figure."
 
     "--out", "-o"
         help = "A file to save to, instead of displaying the window."

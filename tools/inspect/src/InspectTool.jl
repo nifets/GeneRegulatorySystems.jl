@@ -491,7 +491,7 @@ function build_figure(;
     displays::AbstractSet{Symbol},
     kinds::AbstractVector{Symbol},
     selection::Observable{Selection},
-    size::Tuple{Int, Int},
+    size::Tuple{Float64, Float64},
 )
     figure = Figure(; size)
     subplots = Dict(
@@ -532,6 +532,7 @@ function main(;
     displays,
     kinds,
     size,
+    ppi,
     out,
     wait_for_close,
 )
@@ -546,7 +547,7 @@ function main(;
     )
     displays = Set(Symbol.(split(displays, ',', keepempty = false)))
     kinds = Symbol.(split(kinds, ',', keepempty = false))
-    size = Tuple(parse.(Int, split(size, 'x')))
+    size = Tuple(parse.(Float64, split(size, 'x')))
 
     index = load_index(location)
 
@@ -564,7 +565,7 @@ function main(;
         if out === nothing
             display(screen, figure)
         else
-            save(out, figure, px_per_unit = 300/96)
+            save(out, figure, px_per_unit = ppi / 96)
         end
     end
 
@@ -628,6 +629,7 @@ end
                 displays = "selector,trajectory,model,legend,info",
                 kinds = "log10(mrnas),proteins",
                 size = "1280x720",
+                ppi = 96.0,
                 out = nothing,
                 wait_for_close = false;
                 location,
@@ -639,6 +641,7 @@ end
                 displays = "selector,trajectory,model,legend,info",
                 kinds = "activity",
                 size = "1280x720",
+                ppi = 300.0,
                 out = nothing,
                 wait_for_close = false;
                 location,

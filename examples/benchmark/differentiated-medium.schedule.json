@@ -50,7 +50,7 @@
             }
         ],
         "do": {"{regulation/random-differentiation}": {
-            "seed": "differentiation-${seed}-${realization}",
+            "seed": "differentiation-${rootseed}-${realization}",
             "differentiation": {
                 "ratios": ["Dirichlet", {"$": "terminal_states"}, 5.0],
                 "differentiator_base_rates": {"$": "typical_base_rates"},

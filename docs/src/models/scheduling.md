@@ -81,6 +81,7 @@ This call dispatches on the specific type of the `Schedule`'s (top-level) specif
 
 ```@docs
 Schedule
+Scheduling.Merge
 ```
 
 ## Paths and reification

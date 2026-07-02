@@ -7,7 +7,7 @@ connecting [regulation models](@ref "Regulation") within a `Schedule`.
 module Plumbing
 
 import ....GeneRegulatorySystems
-using ..Models: Models, Model, Instant, FlatState, Branched
+using ..Models: Models, Model, Instant, FlatState
 import ..Specifications
 
 """
@@ -54,32 +54,6 @@ Specifications.constructor(::Val{:wait}) = Wait
 
 function (::Wait)(x::FlatState, Δt::Float64; _...)
     x.t += Δt
-    x
-end
-
-"""
-    Seed <: Instant{FlatState}
-
-Instantly reseed the current `randomness`.
-
-# Specification
-
-Specified in JSON as `{"{seed}": <seed>}` where `<seed>` is any JSON string.
-
-# Invocation
-
-    (f!::Seed)(x::FlatState, _Δt::Float64 = Inf; _...)
-
-Reseed `x.randomness` but otherwise leave `x` unchanged.
-"""
-struct Seed <: Instant{FlatState}
-    seed::String
-end
-
-Specifications.constructor(::Val{:seed}) = Seed
-
-function (f!::Seed)(x::FlatState, _Δt::Float64 = Inf; _...)
-    x.randomness = GeneRegulatorySystems.randomness(f!.seed)
     x
 end
 
@@ -198,45 +172,5 @@ Models.remake(f!::Adjust, parameters::AbstractDict{Symbol}) = Adjust(
     f!.adjust,
     Dict(key => get(parameters, key, value) for (key, value) in f!.adjustment)
 )
-
-"""
-    Merge <: Instant{Branched}
-
-Instantly collapse a `Branched` state to a `FlatState` by replacing the `stem`
-with aggregated counts from the `branches`.
-
-# Specification
-
-Currently, only `+` is supported as aggregation. Specified in JSON as
-`{"{merge}": "+"}`.
-
-# Invocation
-
-    (f!::Merge)(x::Branched, _Δt::Float64; _...)
-
-Use the function `f!.merge` to aggregate all of the `x.branches` and return a
-new `FlatState` with the aggregated counts, but retaining `x.stem.t` and
-`x.stem.randomness`.
-"""
-struct Merge <: Instant{Branched}
-    merge::Function
-end
-
-merger(operation::AbstractString) = operation |> Symbol |> Val |> merger
-merger(::Val{:+}) = Merge(+)
-
-Specifications.constructor(::Val{:merge}) = merger
-
-function (f!::Merge)(x::Branched, _Δt::Float64; _...)
-    accumulator = FlatState(
-        t = Models.t(x.stem),
-        randomness = Models.randomness(x.stem),
-    )
-    for b in x.branches
-        b′ = b isa FlatState ? b : FlatState(b)
-        mergewith!(f!.merge, accumulator.counts, b′.counts)
-    end
-    accumulator
-end
 
 end

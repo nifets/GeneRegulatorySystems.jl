@@ -11,10 +11,20 @@ import JSON
 import Muon
 using PrecompileTools
 
-ensure_binary(sink) =
+ensure_binary(sink; format) =
     if sink isa Base.TTY
-        @error "Refusing to write binary data to terminal."
+        @error "Refusing to write `$format` binary data to terminal."
         @info "Either provide `sink`, redirect output, or use another format."
+        throw(:help)
+    end
+
+ensure_directory(sink; format) =
+    if !(sink isa AbstractString)
+        @error "Cannot write `$format` data: `$sink` is not a directory."
+        throw(:help)
+    elseif !isdirpath(sink)
+        @error "Cannot write `$format` data: `$sink` does not name a directory."
+        @info "Perhaps you meant `$sink/`?"
         throw(:help)
     end
 
@@ -151,7 +161,10 @@ function main(;
     sink = @something(sink, stdout)
     if format === nothing
         if sink isa AbstractString
-            _, extension = splitext(sink)
+            chopped, extension = splitext(sink)
+            if isempty(extension) && isdirpath(chopped)
+                chopped, extension = splitext(chop(chopped))
+            end
             if startswith(extension, '.')
                 format = Symbol(extension[2:end])
             end
@@ -195,7 +208,7 @@ function main(;
         if sink isa AbstractString
             Muon.writeh5ad(sink, h5ad)
         else
-            ensure_binary(sink)
+            ensure_binary(sink; format)
             mktemp() do temporary, _io
                 Muon.writeh5ad(temporary, h5ad)
                 write(sink, read(temporary))
@@ -207,15 +220,35 @@ function main(;
             [:dimension, :layer] => ByRow(fuse) => :name,
             Not(:dimension, :layer),
         )
-        result = permutedims(result, :name)
+        segments_as_columns = result
+        segments_as_rows = permutedims(result, :name)
 
         if format == :arrow
-            ensure_binary(sink)
-            Arrow.write(sink, result)
+            ensure_binary(sink; format)
+            Arrow.write(sink, segments_as_rows)
         elseif format == :csv
-            CSV.write(sink, result)
+            CSV.write(sink, segments_as_rows)
         elseif format == :tsv
-            CSV.write(sink, result, delim = '\t')
+            CSV.write(sink, segments_as_rows, delim = '\t')
+        elseif format == :bonsai
+            ensure_directory(sink; format)
+            mkpath(sink)
+            CSV.write(
+                "$(sink)features.txt",
+                select(segments_as_columns, Not(:name)),
+                delim = '\t',
+                writeheader = false,
+            )
+            CSV.write(
+                "$(sink)geneID.txt",
+                select(segments_as_columns, :name),
+                writeheader = false,
+            )
+            CSV.write(
+                "$(sink)cellID.txt",
+                select(segments_as_rows, :name),
+                writeheader = false,
+            )
         else
             @error "Cannot export to unknown format `$format`."
             throw(:help)

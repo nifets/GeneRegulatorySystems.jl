@@ -257,6 +257,7 @@ Note that each invocation of the `JumpModel` `f!` will initially clear the previ
 As previously noted, the actual regulation `JumpModel` is defined by a `method` applied to a `system` along with a set of `parameters`.
 These can be used directly to sample trajectories using the standard JumpProcesses.jl interface:
 ```@example usage
+using Random
 using JumpProcesses
 using ModelingToolkit
 using Plots
@@ -270,7 +271,7 @@ u₀ = [
     for s in unknowns(system)
 ]
 aggregator = method
-rng = GeneRegulatorySystems.randomness("")
+rng = Xoshiro()
 problem = JumpProblem(system, vcat(u₀, parameters), (0.0, 3e4); aggregator, rng)
 
 solution = solve(problem, SSAStepper())
@@ -353,7 +354,7 @@ u₀ = [
 ]
 
 aggregator = method
-rng = GeneRegulatorySystems.randomness("seed")
+rng = Xoshiro("seed")
 problem = JumpProblem(system, vcat(u₀, parameters), (0.0, 1e5); aggregator, rng)
 
 solution = solve(problem, SSAStepper())

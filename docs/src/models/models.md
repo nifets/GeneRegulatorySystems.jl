@@ -13,13 +13,18 @@ Besides those provided, it is straightforward to define new `Model`s and state r
 
 Different models may require different representations of the simulation state to operate on. There is no common supertype of these state representations, but all of these `State` types must at least carry information about the current simulation time, the values of all modeled dynamic variables at that time, and the current state of a random number generator.
 For the dynamics models implemented in this package, the state object also accumulates the full simulation trajectories of a simulation segment if their output is required.
-
 This information is accessed using the following methods, which must be implemented for all state types:
 
 ```@docs
 Models.t
 Models.randomness
 Models.each_event
+```
+
+After the trajectories have been read, they may be cleared to conserve memory:
+
+```@docs
+Models.empty_trajectory!
 ```
 
 Most `Instant` models in this package use `FlatState` as their state representation, which simply contains the current species counts in a `Dict{Symbol, Int}` (i.e., not nested for subsystems) but does not retain full trajectories.

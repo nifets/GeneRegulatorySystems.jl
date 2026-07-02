@@ -15,7 +15,6 @@ can start, which can be achieved by [`Differentiation.bootstrap`].
 """
 module RandomDifferentiation
 
-using ...GeneRegulatorySystems: randomness
 using ..Models: Models, V1, Differentiation, KroneckerNetworks
 using ..Sampling: Nonnegative, BaseRatesTemplate
 import ..Specifications
@@ -402,7 +401,7 @@ build(definition::Definition; method::Symbol = :default) = Models.Wrapped(
     model = Differentiation.build(
         # Deterministically fill in the template to create a concrete
         # Differentiation.Definition from it:
-        rand(randomness(definition.seed), definition.template);
+        rand(Xoshiro(definition.seed), definition.template);
         method,
     );
     definition,

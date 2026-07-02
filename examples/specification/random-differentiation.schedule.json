@@ -18,7 +18,7 @@
             {"to": 100000.0, "step": 100.0}
         ],
         "do": {"{regulation/random-differentiation}": {
-            "seed": "differentiation-${seed}",
+            "seed": "differentiation-${rootseed}",
             "differentiation": {
                 "ratios": ["Dirichlet", 6, 5.0],
                 "differentiator_base_rates": {"$": "typical_base_rates"},
