@@ -133,7 +133,7 @@ In JSON, a V1 `Activation` is specified by either one of:
   `<from>` molecules where the link is at half-saturation (assuming quasi-steady
   state). If more than one slot is specified, default aggregation will apply
   (see below).
-- A JSON object `{"slots": [<slot>...], "aggregation": <aggregation>}` where
+- A JSON object `{"slots": [<slot>...], "aggregate": <aggregation>}` where
   `<aggregation>` is a JSON string specifying how to aggregate inbound
   regulatory links if more than one of them is present by type -- one of the
   following:
@@ -144,10 +144,10 @@ In JSON, a V1 `Activation` is specified by either one of:
   - `"geometric_mean"`
   - `"harmonic_mean"`
   - `"generalized_mean"`
-  If `"aggregation"` is set to `"generalized_mean"`, `"p"` may additionally set
+  If `"aggregate"` is set to `"generalized_mean"`, `"p"` may additionally set
   to a numeric value to control the generalized mean parameter. It is set to
   `0.0` by default, corresponding to a geometric mean. The defaults for
-  `"aggregation"` and `"p"` may be overridden by specifying them in
+  `"aggregate"` and `"p"` may be overridden by specifying them in
   `"activation"` or `"repression"` JSON objects at the `Definition` level; see
   also `examples/specification/aggregations.schedule.json`.
 """
@@ -591,6 +591,11 @@ function each_parameter(callback::Function, definition::Definition)
         for slot in g.proteolysis.slots
             callback(Symbol("$(g.name).proteolysis.$(slot.from).k"), slot.k)
         end
+
+        for (kind, reg) in ((:activation, g.activation), (:repression, g.repression))
+            reg.aggregate isa Base.Fix2{typeof(genmean)} &&
+                callback(Symbol("$(g.name).$(kind).p"), reg.aggregate.x)
+        end
     end
     for rxn in definition.reactions
         callback(Symbol("reaction.$(rxn.name).k⁺"), rxn.k₊)
@@ -673,31 +678,40 @@ function regulation(
             genes[target.name].inactive
         end
 
+    aggregate(reg::Regulation, xs, name::Symbol, kind::String) =
+        isempty(reg.slots) ? one(Num) :
+        reg.aggregate isa Base.Fix2{typeof(genmean)} ?
+            let a = collect(xs),
+                p = make_parameter(Symbol("$(name).$(kind).p"), reg.aggregate.x)
+                (sum(x -> x^p, a) / length(a))^inv(p)
+            end :
+            reg.aggregate(collect(xs))
+
     activation_rate(target::Gene) = (
         inactive(target)
         * make_parameter(Symbol("$(target.name).activation"), target.base_rates.activation)
-        * target.repression(
+        * aggregate(target.repression,
             (  # ^ arguments and value go towards 0 as repression increases
                 hill2(species_reference(from; t, genes), 1.0,
                     make_parameter(Symbol("$(target.name).repression.$(from).at"), at),
                     make_parameter(Symbol("$(target.name).repression.$(from).k"), k))
                 for (; from, k, at) in target.repression.slots
-            );
-            T=Num
+            ),
+            target.name, "repression"
         )
     )
 
     deactivation_rate(target::Gene) = (
         genes[target.name].active
         * make_parameter(Symbol("$(target.name).deactivation"), target.base_rates.deactivation)
-        * target.activation(
+        * aggregate(target.activation,
             (  # ^ arguments and value go towards 0 as activation increases
                 hill2(species_reference(from; t, genes), 1.0,
                     make_parameter(Symbol("$(target.name).activation.$(from).at"), at),
                     make_parameter(Symbol("$(target.name).activation.$(from).k"), k))
                 for (; from, k, at) in target.activation.slots
-            );
-            T=Num
+            ),
+            target.name, "activation"
         )
     )
 

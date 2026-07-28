@@ -24,20 +24,30 @@ In JSON, `ResampleEachBinomial` is specified as a JSON object
 ```
 where `<p>` is a unit-range JSON number specifying the per-molecule retain
 probability.
+```
+{"{resample-each-binomial}": {"p": <p>, "except": "<regex>"}}
+```
 """
 @kwdef struct ResampleEachBinomial <: Model{FlatState}
     p::Float64
+    except::Union{Regex, Nothing} = nothing
 
-    ResampleEachBinomial(p) =
-        0.0 ≤ p ≤ 1.0 ? new(p) : error("invalid probability")
+    function ResampleEachBinomial(p, except = nothing)
+        0.0 ≤ p ≤ 1.0 || error("invalid probability")
+        new(p, except isa AbstractString ? Regex(except) : except)
+    end
 end
+
+ResampleEachBinomial(spec::AbstractDict{Symbol}) =
+    ResampleEachBinomial(spec[:p], get(spec, :except, nothing))
 
 Specifications.constructor(::Val{Symbol("resample-each-binomial")}) =
     ResampleEachBinomial
 
 function (f!::ResampleEachBinomial)(x::FlatState, _Δt::Float64; _...)
-    map!(values(x.counts)) do count
-        rand(x.randomness, Binomial(count, f!.p))
+    for (name, count) in x.counts
+        f!.except !== nothing && occursin(f!.except, String(name)) && continue
+        x.counts[name] = rand(x.randomness, Binomial(count, f!.p))
     end
     x
 end
