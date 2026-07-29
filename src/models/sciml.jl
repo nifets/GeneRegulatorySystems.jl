@@ -10,6 +10,35 @@ using Logging: LogLevel, @logmsg
 
 Progress = LogLevel(-2)
 
+# Integrator reuse kill-switch. When enabled (the default), a single-owner
+# (copy = false) continuation across an Instant/Model{FlatState} intervention
+# resets the existing integrator in place instead of rebuilding one
+# (clone_problem + init). Only ever engaged for single-owner continuations;
+# branches (copy = true) and traces never carry the reuse handle, so they still
+# build fresh independent integrators. Set to false to fall back to always
+# rebuilding, which is behaviourally identical but allocates more.
+const USE_REUSE = Ref(true)
+
+# Share the immutable compiled inner problem (prob.f.sys and friends) via
+# remake, and deepcopy ONLY the mutable jump state. `discrete_jump_aggregation`
+# and `jump_callback.discrete_callbacks[1].condition` are the SAME object, so
+# they are deepcopied in a single call to preserve that aliasing.
+function lightclone(jp::JumpProcesses.JumpProblem)
+    new_inner = JumpProcesses.remake(jp.prob; u0 = copy(jp.prob.u0))
+    agg, cb, maj, rng = deepcopy((
+        jp.discrete_jump_aggregation,
+        jp.jump_callback,
+        jp.massaction_jump,
+        jp.rng,
+    ))
+    T = JumpProcesses.remaker_of(jp)
+    T(new_inner, jp.aggregator, agg, cb,
+        jp.constant_jumps, jp.variable_jumps, jp.regular_jump,
+        maj, rng, jp.kwargs)
+end
+
+clone_problem(f!) = lightclone(f!.problem)
+
 normalize_name(s) =
     Symbol(replace(String(ModelingToolkit.getname(s)), '₊' => '.'))
 
@@ -177,7 +206,7 @@ Models.parameters(f!::JumpModel) = Dict(
 Models.describe(::SciML.JumpModel) = Models.Label("SciML JumpSystem")
 
 function JumpState(x::FlatState; f!::JumpModel)
-    problem = deepcopy(f!.problem)
+    problem = clone_problem(f!)
     # ^ Given that ModelingToolkit.init below with alias_jump = false would just
     # deepcopy the whole JumpProblem anyway, we will do it ourselves here so we
     # can rest easy in the knowledge that f!.problem is never mutated.
@@ -210,22 +239,107 @@ function JumpState(x::FlatState; f!::JumpModel)
     for s in SymbolicIndexingInterface.variable_symbols(integrator)
         integrator[s] = get(x.counts, normalize_name(s), 0)
     end
+    # Re-set the integrator's authoritative RNG to the FlatState position AFTER
+    # init has consumed its entropy, so the authoritative draws below start from
+    # exactly the same position as the reuse fast path (reset_integrator!),
+    # which never runs init. This makes fresh-build and reuse produce identical
+    # trajectories. `integrator.cb.affect!.rng` is what Models.randomness reads.
+    Random.setstate!(integrator.cb.affect!.rng, Random.getstate(x.randomness))
     JumpProcesses.reset_aggregated_jumps!(integrator)
 
     JumpState(; f!, integrator)
 end
 
-Models.adapt!(x::FlatState, f!::JumpModel, ::Val{_Copy}) where {_Copy} =
+# Reset an existing integrator to represent `x`, reusing all of its backing
+# storage instead of rebuilding a fresh one. Mirrors the tail of
+# `JumpState(::FlatState)` exactly (RNG state, time, counts, aggregator reset)
+# so a reused integrator is behaviourally identical to a freshly built one.
+function reset_integrator!(src::JumpState, x::FlatState)
+    integrator = src.integrator
+    Random.setstate!(Models.randomness(src), Random.getstate(Models.randomness(x)))
+    Models.empty_trajectory!(src)   # match a fresh integrator's empty trajectory
+    # Reset the SSAStepper bookkeeping that accumulates across a segment's
+    # step!(…, Δt, true) so a reused integrator starts a segment exactly like a
+    # freshly `init`-ed one (which has empty tstops, indices at 1, etc.).
+    empty!(integrator.tstops)
+    integrator.tstops_idx = 1
+    integrator.i = 1
+    integrator.cur_saveat = 1
+    integrator.u_modified = false
+    integrator.keep_stepping = true
+    integrator.t = Models.t(x)
+    for s in SymbolicIndexingInterface.variable_symbols(integrator)
+        integrator[s] = get(x.counts, normalize_name(s), 0)
+    end
+    reset_search_order!(integrator.cb.condition)
+    JumpProcesses.reset_aggregated_jumps!(integrator)
+    JumpState(; src.f!, integrator)
+end
+
+# Some SSA aggregators (notably SortingDirect) keep a self-organizing reaction
+# search order that reorders as jumps fire, so a stepped integrator's order is
+# path dependent. `reset_aggregated_jumps!` refreshes rates but not this order,
+# so restore it to the canonical identity a freshly built aggregator starts
+# with, making a reused integrator's next_jump selection identical to a fresh
+# one's. Correctness does not depend on the order (any order samples reaction j
+# with probability rate_j / sum_rate); this is purely to keep reuse an exact
+# match for the from-scratch build. No-op for aggregators without such state.
+function reset_search_order!(agg)
+    if hasproperty(agg, :jump_search_order)
+        jso = agg.jump_search_order
+        @inbounds for i in eachindex(jso)
+            jso[i] = i
+        end
+        agg.jump_search_idx = 0
+    end
+    nothing
+end
+
+function Models.adapt!(x::FlatState, f!::JumpModel, ::Val{false})
+    src = x.source
+    if USE_REUSE[] && src isa JumpState && src.f! === f!
+        x.source = nothing   # consume the handle so it can never be reused twice
+        return reset_integrator!(src, x)
+    end
     JumpState(x; f!)
+end
+
+Models.adapt!(x::FlatState, f!::JumpModel, ::Val{true}) = JumpState(x; f!)
+
 Models.adapt!(x::JumpState, f!::JumpModel, ::Val{Copy}) where {Copy} =
     x.f! === f! && !Copy ? x : JumpState(FlatState(x); f!)
+
+# Flattening a live JumpState to feed a Model{FlatState} intervention (division,
+# add/set, resampling, ...). When this is a single-owner continuation
+# (copy = false), remember the live JumpState on the resulting FlatState so the
+# following dynamic segment can reset its integrator in place rather than clone.
+function Models.adapt!(x::JumpState, f!::Model{FlatState}, ::Val{false})
+    fs = FlatState(x)
+    USE_REUSE[] && (fs.source = x)
+    fs
+end
 
 # HACK: JumpProcesses.remake mutates the original problem.
 # see: https://github.com/SciML/JumpProcesses.jl/issues/416
 # and https://github.com/SciML/JumpProcesses.jl/issues/554
 function remake_p(jp::JumpProcesses.JumpProblem; p)
     new_inner = JumpProcesses.remake(jp.prob; p = p)
-    new_maj = deepcopy(jp.massaction_jump)
+    # `update_parameters!` mutates only `scaled_rates`; the stoichiometry
+    # vectors and `param_mapper` are read-only, so we share them (like the
+    # light clone shares the compiled system) and only give the new jump a
+    # fresh mutable `scaled_rates`. A full deepcopy here would drag the whole
+    # compiled system via `param_mapper` (~3 GB / ~16% of a run measured).
+    maj = jp.massaction_jump
+    new_maj = JumpProcesses.MassActionJump(
+        copy(maj.scaled_rates),
+        maj.reactant_stoch,
+        maj.net_stoch,
+        maj.param_mapper;
+        scale_rates = false,
+        useiszero = false,
+        nocopy = true,
+        rescale_rates_on_update = maj.rescale_rates_on_update,
+    )
     JumpProcesses.update_parameters!(new_maj, new_inner.p)
     T = JumpProcesses.remaker_of(jp)
     T(new_inner, jp.aggregator, jp.discrete_jump_aggregation, jp.jump_callback,

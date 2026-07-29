@@ -22,6 +22,13 @@ dimension names in `FlatState` are flattened by joining on `"."`.
     t::Float64 = 0.0
     counts::Dict{Symbol, Int} = Dict{Symbol, Int}()
     randomness::AbstractRNG = Xoshiro()
+    # Optional, internal handle to a live state whose backing resources may be
+    # reused when re-adapting this `FlatState` to the same model (see the
+    # integrator-reuse fast path in `SciML`). It is only ever set for a
+    # single-owner (`copy = false`) flattening of a live state; it is
+    # deliberately dropped by the copy constructor below so that branched or
+    # traced `FlatState`s never alias a live resource.
+    source::Any = nothing
 end
 FlatState(x::FlatState) = FlatState(;
     x.t,
