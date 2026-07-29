@@ -110,6 +110,7 @@ end
     from::Symbol
     at::Float64
     k::Float64 = -1.0
+    w::Float64 = 1.0
 end
 
 abstract type Regulation end
@@ -445,7 +446,7 @@ representation(x::ProkaryoteBaseRates) = representation(x, simple = true)
 representation(x::EukaryoteBaseRates) = representation(x, simple = true)
 representation(x::DirectRegulator) = representation(x, simple = true)
 representation(x::HillRegulator) =
-    representation(x, simple = true, omit_defaults = [:k => -1.0])
+    representation(x, simple = true, omit_defaults = [:k => -1.0, :w => 1.0])
 representation(x::Activation) = regulation_representation(x.slots, x.aggregate)
 representation(x::Repression) = regulation_representation(x.slots, x.aggregate)
 representation(x::Proteolysis) = representation(x.slots)
@@ -681,9 +682,13 @@ function regulation(
     aggregate(reg::Regulation, xs, name::Symbol, kind::String) =
         isempty(reg.slots) ? one(Num) :
         reg.aggregate isa Base.Fix2{typeof(genmean)} ?
-            let a = collect(xs),
-                p = make_parameter(Symbol("$(name).$(kind).p"), reg.aggregate.x)
-                (sum(x -> x^p, a) / length(a))^inv(p)
+            let hs = collect(xs),
+                ws = [make_parameter(Symbol("$(name).$(kind).$(s.from).w"), s.w) for s in reg.slots],
+                p = make_parameter(Symbol("$(name).$(kind).p"), reg.aggregate.x),
+                W = sum(ws),
+                num = sum(i -> ws[i] * hs[i]^p, eachindex(hs)),
+                logmean = sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W
+                ifelse(W > 0.5, ifelse(abs(p) < 1e-6, exp(logmean), (num / W)^inv(p)), one(Num))
             end :
             reg.aggregate(collect(xs))
 
