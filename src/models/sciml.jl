@@ -174,13 +174,20 @@ end
 # https://github.com/SciML/ModelingToolkit.jl/issues/3315
 const JUMP_PROBLEM_LOCK = ReentrantLock()
 
-JumpModel(system::ModelingToolkit.System, method::JumpProcesses.AbstractAggregatorAlgorithm) =
+JumpModel(
+    system::ModelingToolkit.System,
+    method::JumpProcesses.AbstractAggregatorAlgorithm;
+    # Forwarded to the aggregation constructor; e.g. `bracket_data` for the
+    # RSSA family (see `V1.promoter_bracket_data`).
+    problem...,
+) =
     lock(JUMP_PROBLEM_LOCK) do
         JumpModel(problem = ModelingToolkit.JumpProblem(
             system,
             [s => 0 for s in ModelingToolkit.unknowns(system)],
-            (0.0, Inf),
+            (0.0, Inf);
             aggregator = method,
+            problem...,
             # Independent, deterministically seeded RNG (instead of the default
             # TaskLocalRNG): `JumpState` reseeds this before initializing any
             # integrator and relies on the deepcopy producing independent

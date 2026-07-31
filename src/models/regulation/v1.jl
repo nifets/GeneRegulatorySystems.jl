@@ -804,6 +804,74 @@ pick_method(system; method) = get(JUMP_PROCESSES_METHODS, method) do
     end
 end
 
+const RSSA_METHODS = (RSSA, RSSACR)
+
+"""
+Whether the RSSA family can validly bracket this `definition`'s propensities.
+
+RSSA bounds a `ConstantRateJump`'s propensity by evaluating its rate at only two
+corners of the species bracket box — all species low, and all species high (see
+`get_cjump_brackets` in JumpProcesses). That is a valid bound only if the rate is
+monotone in every bracketed species; otherwise the extremum sits at a mixed
+corner that is never evaluated, the upper bound is too low, and rejection
+sampling silently under-rejects.
+
+Our regulated rates are `promoter_state * base * aggregate(hill(regulator)...)`.
+The generalized mean is increasing in each of its arguments, and `hill` is
+non-increasing in the regulator count exactly when the slot's `k` is non-positive
+(`k < 0` decreasing; `k == 0` makes `hill` the constant `v/2`, which is monotone
+in the weak sense the bound needs) — so with all `k <= 0` every rate is
+non-increasing in every regulator protein. A positive `k` flips one term's
+direction and destroys monotonicity, so we refuse RSSA then.
+
+The remaining non-monotone coordinate, the promoter state species (a rate is
+linear *increasing* in it), is handled by [`promoter_bracket_data`](@ref).
+"""
+rssa_admissible(definition::Definition) = all(definition.genes) do gene
+    all(slot -> slot.k <= 0.0, gene.activation.slots) &&
+        all(slot -> slot.k <= 0.0, gene.repression.slots)
+end
+
+"""
+Bracket data pinning the promoter state species to exact (zero-width) brackets.
+
+Every regulated rate is linear increasing in its gene's promoter state species
+while being decreasing in the regulator proteins, which makes it non-monotone
+over a box that gives the promoter any width. Since the promoter species are
+booleans, bracketing them at all is pointless anyway; pinning them to zero width
+removes that coordinate from the box and restores monotonicity in the rest.
+
+The cost is that a promoter toggle always falls outside its bracket and forces a
+propensity recomputation. Promoter transitions are a small minority of events
+relative to protein birth/death, so most of RSSA's saving is retained.
+"""
+function promoter_bracket_data(system)
+    names = [String(ModelingToolkit.getname(s)) for s in ModelingToolkit.unknowns(system)]
+    exact = [endswith(n, "active") for n in names]  # matches `active` and `inactive`
+    # The vector-valued accessors in JumpProcesses dispatch on the field type
+    # being exactly `AbstractVector`, so the type parameters are spelled out.
+    BracketData{AbstractVector{Float64}, AbstractVector{Int}}(
+        [e ? 0.0 : 0.1 for e in exact],
+        [e ? 0 : 25 for e in exact],
+        [e ? 0 : 4 for e in exact],
+    )
+end
+
+"""
+Extra `JumpProblem` keywords for `algorithm`: promoter bracketing if RSSA-based.
+"""
+aggregator_options(algorithm, system, definition) =
+    if algorithm in RSSA_METHODS
+        rssa_admissible(definition) ||
+            error("$(nameof(algorithm)) requires every activation/repression `k` to be \
+                   non-positive so that propensities are monotone in the regulator \
+                   counts; this definition has a positive `k`. Use SortingDirect \
+                   instead.")
+        (; bracket_data = promoter_bracket_data(system))
+    else
+        (;)
+    end
+
 """
     build(specification::AbstractDict{Symbol})
     build(definition::Definition; method::Symbol = :default)
@@ -888,13 +956,17 @@ function build(definition::Definition; method::Symbol = :default)
     )
     reaction_system = complete(reaction_system)
 
+    jump_system = complete(jump_model(reaction_system))
+    algorithm = pick_method(reaction_system; method)
+
     Models.Wrapped(;
         definition,
         model = Models.Wrapped(
             definition = reaction_system,
             model = SciML.JumpModel(
-                complete(jump_model(reaction_system)),
-                pick_method(reaction_system; method)()
+                jump_system,
+                algorithm();
+                aggregator_options(algorithm, jump_system, definition)...,
             ),
         ),
     )
