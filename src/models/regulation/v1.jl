@@ -789,12 +789,27 @@ function regulation(
     ]
 end
 
+"""
+The `TauSplitting` aggregator, or `nothing` when JumpProcesses does not ship it.
+
+`TauSplitting` (and the `DirectionalBounds` it needs) only exist in JumpProcesses
+builds carrying that aggregator, so referencing the name unconditionally would
+make this module fail to load against a stock JumpProcesses. Resolving it once
+here keeps the rest of the model usable, minus the method.
+"""
+const TAU_SPLITTING =
+    isdefined(JumpProcesses, :TauSplitting) ? JumpProcesses.TauSplitting : nothing
+
 const JUMP_PROCESSES_METHODS = Dict(
     :Direct => Direct,
     :SortingDirect => SortingDirect,
     :RSSA => RSSA,
     :RSSACR => RSSACR,
 )
+
+if TAU_SPLITTING !== nothing
+    JUMP_PROCESSES_METHODS[:TauSplitting] = TAU_SPLITTING
+end
 
 pick_method(system; method) = get(JUMP_PROCESSES_METHODS, method) do
     if numspecies(system) < 100 && numreactions(system) < 1000
@@ -856,18 +871,75 @@ function promoter_bracket_data(system)
         [e ? 0 : 4 for e in exact],
     )
 end
+function propensity_directions(reaction, species_index)
+    substrates = Set(ModelingToolkit.value.(reaction.substrates))
+
+    return Pair{Int, Int8}[
+        species_index[species] => Int8(species in substrates ? 1 : -1)
+        for variable in Catalyst.get_variables(reaction.rate)
+        for species in (ModelingToolkit.value(variable),)
+        if haskey(species_index, species)
+    ]
+end
+
+function tau_splitting_options(reaction_system, jump_system, definition)
+    rssa_admissible(definition) ||
+        error("TauSplitting currently requires every activation/repression `k` \
+               to be non-positive.")
+
+    system = Catalyst.flatten(reaction_system)
+    reactions = Catalyst.reactions(system)
+    unknowns = ModelingToolkit.unknowns(jump_system)
+
+    species_index = Dict(
+        ModelingToolkit.value(species) => i
+        for (i, species) in enumerate(unknowns)
+    )
+
+    is_mass_action = [
+        Catalyst.ismassaction(reaction, system)
+        for reaction in reactions
+    ]
+
+    constant_reactions = reactions[.!is_mass_action]
+
+    dirs = [
+        propensity_directions(reaction, species_index)
+        for reaction in constant_reactions
+    ]
+
+    jumptostoich_map = [
+        Pair{Int, Int}[
+            species_index[species] => Int(stoch)
+            for (raw_species, stoch) in reaction.netstoich
+            for species in (ModelingToolkit.value(raw_species),)
+            if haskey(species_index, species)
+        ]
+        for reaction in constant_reactions
+    ]
+
+    return (
+        propensity_bounds = DirectionalBounds(
+            dirs,
+            zeros(Int, length(unknowns)),
+        ),
+        jumptostoich_map,
+    )
+end
 
 """
 Extra `JumpProblem` keywords for `algorithm`: promoter bracketing if RSSA-based.
 """
-aggregator_options(algorithm, system, definition) =
+aggregator_options(algorithm, reaction_system, jump_system, definition) =
     if algorithm in RSSA_METHODS
         rssa_admissible(definition) ||
             error("$(nameof(algorithm)) requires every activation/repression `k` to be \
                    non-positive so that propensities are monotone in the regulator \
                    counts; this definition has a positive `k`. Use SortingDirect \
                    instead.")
-        (; bracket_data = promoter_bracket_data(system))
+        (; bracket_data = promoter_bracket_data(jump_system))
+    elseif algorithm === TAU_SPLITTING
+        tau_splitting_options(reaction_system, jump_system, definition)
     else
         (;)
     end
@@ -955,7 +1027,6 @@ function build(definition::Definition; method::Symbol = :default)
         )
     )
     reaction_system = complete(reaction_system)
-
     jump_system = complete(jump_model(reaction_system))
     algorithm = pick_method(reaction_system; method)
 
@@ -966,7 +1037,7 @@ function build(definition::Definition; method::Symbol = :default)
             model = SciML.JumpModel(
                 jump_system,
                 algorithm();
-                aggregator_options(algorithm, jump_system, definition)...,
+                aggregator_options(algorithm, reaction_system, jump_system, definition)...,
             ),
         ),
     )
