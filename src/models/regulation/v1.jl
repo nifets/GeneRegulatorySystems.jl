@@ -886,7 +886,7 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition)
             if haskey(species_index, s)
         ]
     end
-    propensity_bounds = DirectionalBounds{Int}([propensity_directions(rx, species_index)
+    propensity_bounds = DirectionalBounds{Float64}([propensity_directions(rx, species_index)
         for rx in constant_reactions], length(unknowns))
 
     if algorithm in (RSSA, RSSACR)

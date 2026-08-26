@@ -47,7 +47,7 @@ Specifications.constructor(::Val{Symbol("resample-each-binomial")}) =
 function (f!::ResampleEachBinomial)(x::FlatState, _Δt::Float64; _...)
     for (name, count) in x.counts
         f!.except !== nothing && occursin(f!.except, String(name)) && continue
-        x.counts[name] = rand(x.randomness, Binomial(count, f!.p))
+        x.counts[name] = rand(x.randomness, Binomial(floor(Int, count), f!.p))
     end
     x
 end
@@ -87,7 +87,7 @@ Specifications.constructor(::Val{Symbol("resample-each-accumulate")}) =
 function (f!::ResampleEachAccumulate)(x::FlatState, _Δt::Float64; _...)
     map!(values(x.counts)) do count
         sum(
-            enumerate(rand(x.randomness, Multinomial(count, f!.ps)))
+            enumerate(rand(x.randomness, Multinomial(floor(Int, count), f!.ps)))
         ) do (i, count′)
             (i - 1) * count′
         end
@@ -124,11 +124,12 @@ Specifications.constructor(::Val{Symbol("resample-hypergeometric")}) =
     ResampleHypergeometric
 
 function (f!::ResampleHypergeometric)(x::FlatState, _Δt::Float64; _...)
-    reservoir = sum(values(x.counts))
+    reservoir = sum(floor(Int, count) for count in values(x.counts))
     todo = f!.n
     reservoir ≤ todo && return x
 
     map!(values(x.counts)) do count
+        count = floor(Int, count)
         reservoir -= count
         count = rand(x.randomness, Hypergeometric(count, reservoir, todo))
         todo -= count

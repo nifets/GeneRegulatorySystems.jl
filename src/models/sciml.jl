@@ -194,7 +194,7 @@ JumpModel(
             # instances, so we can treat the `JumpProblem` as effectively
             # immutable. See `JumpState` and SciML issue #554.
             rng = Random.Xoshiro(),
-            u0_eltype = Int,
+            u0_eltype = Float64,
         ))
     end
 

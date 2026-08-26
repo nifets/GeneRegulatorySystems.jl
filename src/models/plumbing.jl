@@ -163,7 +163,11 @@ Specifications.constructor(::Val{:add}) = adder
 Specifications.constructor(::Val{:multiply}) = multiplier
 
 function (f!::Adjust)(x::FlatState, _Δt::Float64; _...)
-    mergewith!(Base.Fix1(floor, Int) ∘ f!.adjust, x.counts, f!.adjustment)
+    T = valtype(x.counts)
+    convert_result = T <: Integer ?
+        Base.Fix1(floor, T) :
+        Base.Fix1(convert, T)
+    mergewith!(convert_result ∘ f!.adjust, x.counts, f!.adjustment)
     x
 end
 

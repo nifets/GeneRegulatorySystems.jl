@@ -18,22 +18,49 @@ counts. For models that have dimensions associated with subsystems (such as
 genes in [`Models.V1`](@ref GeneRegulatorySystems.Models.V1)), the corresponding
 dimension names in `FlatState` are flattened by joining on `"."`.
 """
-@kwdef mutable struct FlatState
-    t::Float64 = 0.0
-    counts::Dict{Symbol, Int} = Dict{Symbol, Int}()
-    randomness::AbstractRNG = Xoshiro()
+mutable struct FlatState{T <: Real}
+    t::Float64
+    counts::Dict{Symbol, T}
+    randomness::AbstractRNG
     # Optional, internal handle to a live state whose backing resources may be
     # reused when re-adapting this `FlatState` to the same model (see the
     # integrator-reuse fast path in `SciML`). It is only ever set for a
     # single-owner (`copy = false`) flattening of a live state; it is
     # deliberately dropped by the copy constructor below so that branched or
     # traced `FlatState`s never alias a live resource.
-    source::Any = nothing
+    source::Any
 end
-FlatState(x::FlatState) = FlatState(;
+
+function FlatState(;
+    t::Real = 0.0,
+    counts::AbstractDict{Symbol, <:Real} = Dict{Symbol, Float64}(),
+    randomness::AbstractRNG = Xoshiro(),
+    source = nothing
+)
+    T = valtype(counts)
+    isconcretetype(T) || error("FlatState count type must be concrete")
+    FlatState{T}(Float64(t), Dict{Symbol, T}(counts), randomness, source)
+end
+
+function FlatState{T}(;
+    t::Real = 0.0,
+    counts::AbstractDict{Symbol, <:Real} = Dict{Symbol, T}(),
+    randomness::AbstractRNG = Xoshiro(),
+    source = nothing
+) where {T <: Real}
+    FlatState{T}(
+        Float64(t),
+        Dict{Symbol,T}(counts),
+        randomness,
+        source
+    )
+end
+
+FlatState(x::FlatState{T}) where {T} = FlatState{T}(;
     x.t,
     counts = deepcopy(x.counts),
     randomness = copy(x.randomness),
+    source = nothing
 )
 
 
