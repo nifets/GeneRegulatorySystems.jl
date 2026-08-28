@@ -108,6 +108,7 @@ end
 
 Models.unwrap(primitive!::Primitive) = Models.unwrap(primitive!.f!)
 Models.describe(primitive!::Primitive) = Models.describe(primitive!.f!)
+Models.parameters(primitive!::Primitive) = Models.parameters(primitive!.f!)
 
 function (primitive!::Primitive)(
     x,

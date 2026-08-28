@@ -6,7 +6,9 @@ AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 GeneRegulatorySystems = "321a2579-640d-4198-9790-c715c19becf3"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JumpProcesses = "ccbc3e58-028d-4f4c-8cd5-9ae44345cda5"
 LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
 
 [compat]
+JumpProcesses = "9.29.2"
 julia = "1.11"

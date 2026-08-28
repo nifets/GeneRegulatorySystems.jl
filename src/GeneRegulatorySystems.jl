@@ -12,6 +12,8 @@ logit(p) = log(p / (one(p) - p))
 
 include("specifications.jl")
 include("models/models.jl")
+include("network_representation.jl")
+
 
 using .Specifications: Specification
 using .Models: Model
@@ -23,6 +25,7 @@ export Models
 export Model
 export Scheduling
 export Schedule
+export NetworkRepresentation
 
 @compile_workload begin
     dryrun(_primitive!, _x, _Δt; _...) = nothing

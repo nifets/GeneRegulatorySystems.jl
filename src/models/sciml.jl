@@ -42,6 +42,76 @@ clone_problem(f!) = lightclone(f!.problem)
 normalize_name(s) =
     Symbol(replace(String(ModelingToolkit.getname(s)), '₊' => '.'))
 
+function Models.Reaction(reaction::Catalyst.Reaction)
+    function reagents(species, stoichiometries)
+        Models.Reagents(Dict(
+            normalize_name(species) => Int(stoichiometry)
+            for (species, stoichiometry) in zip(species, stoichiometries)
+        ))
+    end
+    function reaction_name(properties)
+        kind = properties[:kind]
+        kind === :auxiliary && return Symbol("reaction.", properties[:name])
+
+        owner = properties[:owner]
+        kind === :proteolysis && return Symbol(owner, ".", kind, ".", properties[:from])
+
+        Symbol(owner, ".", kind)
+    end
+    properties = Dict{Symbol, Any}(reaction.metadata)
+    properties[:only_use_rate] = reaction.only_use_rate
+    Models.Reaction(
+        name = reaction_name(properties),
+        from = reagents(reaction.substrates, reaction.substoich),
+        to = reagents(reaction.products, reaction.prodstoich),
+        k⁺ = reaction.rate,
+        k⁻ = zero(reaction.rate),
+        properties = properties
+    )
+end
+
+function Models.describe(system::Catalyst.ReactionSystem)
+    function merge_reactions(reactions)
+        rxs = Models.Reaction[]
+        groups = Dict{Symbol, Dict{Symbol, Models.Reaction}}()
+        for r in reactions
+            dir = get(r.properties, :direction, nothing)
+            if isnothing(r.name) || isnothing(dir)
+                push!(rxs, r)
+            else
+                directions = get!(groups, r.name) do
+                    Dict{Symbol, Models.Reaction}()
+                end
+                directions[dir] = r
+            end
+        end
+        for (name, directions) in groups
+            forward = get(directions, :forward, nothing)
+            reverse = get(directions, :reverse, nothing)
+            base = something(forward, reverse)
+            properties = copy(base.properties)
+            delete!(properties, :direction)
+            properties[:parameters] = merge(
+                isnothing(forward) ? Dict{Symbol,Symbol}() :
+                    forward.properties[:parameters],
+                isnothing(reverse) ? Dict{Symbol,Symbol}() :
+                    reverse.properties[:parameters],
+            )
+            push!(rxs, Models.Reaction(
+                name=name,
+                from=isnothing(forward) ? reverse.to : forward.from,
+                to = isnothing(forward) ? reverse.from : forward.to,
+                k⁺ = isnothing(forward) ? zero(reverse.k⁺) : forward.k⁺,
+                k⁻ = isnothing(reverse) ? zero(forward.k⁺) : reverse.k⁺,
+                properties=properties
+            ))
+        end
+        rxs
+    end
+    Models.ReactionNetwork(reactions = merge_reactions(Models.Reaction.(Catalyst.reactions(system))))
+end
+
+
 @kwdef mutable struct TriggerProgress
     i::Int = 0
 end
@@ -230,7 +300,7 @@ function JumpState(x::FlatState; f!::JumpModel)
     # type because we ensured that at construction. The Models.randomness(x)
     # instance will no longer be carried forward.
 
-    integrator = ModelingToolkit.init(
+    integrator = JumpProcesses.init(
         problem,
         JumpProcesses.SSAStepper(),
         save_start = false,
@@ -415,11 +485,11 @@ function (f!::JumpModel)(
     verbose && @logmsg Progress :advancing at = "JumpModel" todo = Δt
     x.integrator.save_everystep = record
     if record
-        ModelingToolkit.savevalues!(x.integrator, true)
-        ModelingToolkit.step!(x.integrator, Δt, true)
+        JumpProcesses.savevalues!(x.integrator, true)
+        JumpProcesses.step!(x.integrator, Δt, true)
     else
-        ModelingToolkit.step!(x.integrator, Δt, true)
-        ModelingToolkit.savevalues!(x.integrator, true)
+        JumpProcesses.step!(x.integrator, Δt, true)
+        JumpProcesses.savevalues!(x.integrator, true)
     end
     verbose && @logmsg Progress :done at = "JumpModel"
 

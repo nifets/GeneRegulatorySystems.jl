@@ -292,16 +292,16 @@ function make_timer!(
     # proteins.
     if !isempty(buffer_rates)
         if length(buffer_rates) == 1
-            k₊ = k₋ = only(buffer_rates)
+            k⁺ = k⁻ = only(buffer_rates)
         elseif length(buffer_rates) == 2
-            k₊, k₋ = buffer_rates
+            k⁺, k⁻ = buffer_rates
         else
             error("timer dimerization buffer reaction has too many rates")
         end
         from = Models.Reagents(Dict(timer.name => 2))
         to = Models.Reagents(Dict(Symbol("$(timer.name)_buffer") => 1))
         push!(reactions, Models.Reaction(;
-            name = Symbol("$(timer.name)_buffer"), from, to, k₊, k₋,
+            name = Symbol("$(timer.name)_buffer"), from, to, k⁺, k⁻,
         ))
     end
 

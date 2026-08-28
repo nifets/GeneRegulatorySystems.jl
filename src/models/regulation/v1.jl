@@ -476,59 +476,96 @@ representation(x::Definition) = Dict{Symbol, Any}(
     )
 )
 
-Models.describe(::ReactionSystem) = Models.Label("Catalyst ReactionSystem")
-
-Models.describe(definition::Definition) = Models.Descriptions([
-    Models.Label(
-        "'regulation/v1' network with $(length(definition.genes)) genes"
-    )
-    Models.Network(
-        species_groups = [gene.name for gene in definition.genes],
-        links = mapreduce(vcat, definition.genes) do gene
-            vcat(
-                map(gene.activation.slots) do (; from, at, k)
-                    properties = Dict(:at => at, :k => k)
-                    (; to = gene.name, from, kind = :activation, properties)
-                end,
-                map(gene.repression.slots) do (; from, at, k)
-                    properties = Dict(:at => at, :k => k)
-                    (; to = gene.name, from, kind = :repression, properties)
-                end,
-                map(gene.proteolysis.slots) do (; from, k)
-                    properties = Dict(:k => k)
-                    (; to = gene.name, from, kind = :proteolysis, properties)
-                end,
-            )
-        end,
-        aliases = Dict(
-            Symbol("$(gene.name).proteins") => gene.name
-            for gene in definition.genes
+function Models.describe(definition::Definition)
+    genes = Set(gene.name for gene in definition.genes)
+    regulator(name) = name in genes ? Symbol("$(name).proteins") : name
+    function modulation(gene, kind, from)
+        if definition.promoter_model === :equilibrium
+            edge_kind = kind === :activation ? :promotes : :inhibits
+            reaction = Symbol("$(gene).trigger")
+        else
+            edge_kind = :inhibits
+            reaction = Symbol("$(gene).$(kind === :activation ? "deactivation" : "activation")")
+        end
+        (; kind=edge_kind, from=regulator(from), to=reaction)
+    end
+    links = mapreduce(vcat, definition.genes; init=NamedTuple[]) do gene
+        vcat(
+            map(gene.activation.slots) do (; from, at, k)
+                properties = Dict(:at => at, :k => k,
+                    :parameters => Dict(
+                        :at => Symbol("$(gene.name).activation.$from.at"),
+                        :k => Symbol("$(gene.name).activation.$from.k")
+                ))
+                (; to = gene.name, from, kind = :activation, modulation=modulation(gene.name, :activation, from), properties)
+            end,
+            map(gene.repression.slots) do (; from, at, k)
+                properties = Dict(:at => at, :k => k,
+                    :parameters => Dict(
+                        :at => Symbol("$(gene.name).repression.$from.at"),
+                        :k => Symbol("$(gene.name).repression.$from.k")
+                ))
+                (; to = gene.name, from, kind = :repression, modulation=modulation(gene.name, :repression, from), properties)
+            end,
+            map(gene.proteolysis.slots) do (; from, k)
+                properties = Dict(:k => k,
+                    :parameters => Dict(
+                        :k => Symbol("$(gene.name).proteolysis.$from.k")
+                ))
+                (; to = gene.name, from, kind = :proteolysis, properties)
+            end,
+        )
+    end
+    Models.Descriptions([
+        Models.Label(
+            "'regulation/v1' network with $(length(definition.genes)) genes"
         ),
-    )
-    Models.ReactionNetwork(definition.reactions)
-])
+        Models.RegulatoryNetwork(;
+            species_groups = [gene.name for gene in definition.genes],
+            links,
+            shared_species=Set([definition.polymerases, definition.ribosomes, definition.proteasomes])
+        ),
+        Models.ReactionNetwork(;reactions=definition.reactions)
+    ])
+end
+
+function annotate(reaction, kind::Symbol; owner=nothing, metadata...)
+    Symbolics.setmetadata(reaction, :kind, kind)
+    owner === nothing || Symbolics.setmetadata(reaction, :owner, owner)
+    for (key, value) in pairs(metadata)
+        Symbolics.setmetadata(reaction, key, value)
+    end
+    reaction
+end
 
 function cascade(definition::Gene{Rates}, ::Val{PromoterModel}; polymerases, ribosomes, proteasomes) where {Rates, PromoterModel}
     name = definition.name
     rxs = Reaction[]
+
+    add(kind, reaction) = push!(rxs, annotate(
+        reaction,
+        kind;
+        owner=name,
+        parameters=Dict(:rate => Symbol("$(name).$(kind)"))
+    ))
+
     if PromoterModel === :switching
-        push!(rxs, @reaction trigger, active + $polymerases --> active + elongations)
+        add(:trigger, @reaction trigger, active + $polymerases --> active + elongations)
     end
 
     if Rates === ProkaryoteBaseRates
-        push!(rxs, @reaction transcription, elongations --> mrnas + $polymerases)
+        add(:transcription, @reaction transcription, elongations --> mrnas + $polymerases)
     elseif Rates === EukaryoteBaseRates
-        push!(rxs, @reaction transcription, elongations --> premrnas + $polymerases)
-        push!(rxs, @reaction processing, premrnas --> mrnas)
-        push!(rxs, @reaction premrna_decay, premrnas --> 0)
+        add(:transcription, @reaction transcription, elongations --> premrnas + $polymerases)
+        add(:processing, @reaction processing, premrnas --> mrnas)
+        add(:premrna_decay, @reaction premrna_decay, premrnas --> 0)
     end
 
-    append!(rxs, [
-        (@reaction translation, mrnas + $ribosomes --> mrnas + proteins + $ribosomes),
-        (@reaction abortion, elongations --> $polymerases),
-        (@reaction mrna_decay, mrnas --> 0),
-        (@reaction protein_decay, proteins + $proteasomes --> $proteasomes)
-    ])
+    add(:translation, @reaction translation, mrnas + $ribosomes --> mrnas + proteins + $ribosomes),
+    add(:abortion, @reaction abortion, elongations --> $polymerases),
+    add(:mrna_decay, @reaction mrna_decay, mrnas --> 0),
+    add(:protein_decay, @reaction protein_decay, proteins + $proteasomes --> $proteasomes)
+
     ReactionSystem(rxs, default_t(); name)
 end
 
@@ -588,8 +625,8 @@ function each_parameter(callback::Function, definition::Definition)
         end
     end
     for rxn in definition.reactions
-        callback(Symbol("reaction.$(rxn.name).k⁺"), rxn.k₊)
-        callback(Symbol("reaction.$(rxn.name).k₋"), rxn.k₋)
+        callback(Symbol("reaction.$(rxn.name).k⁺"), rxn.k⁺)
+        callback(Symbol("reaction.$(rxn.name).k⁻"), rxn.k⁻)
     end
 end
 
@@ -608,8 +645,8 @@ Models.remake(definition::Definition, parameters::AbstractDict{Symbol, <:Real}) 
     reactions=[
         Models.Reaction(;
             rxn.name, rxn.from, rxn.to,
-            k₊ = get(parameters, Symbol("reaction.$(rxn.name).k⁺"), rxn.k₊),
-            k₋ = get(parameters, Symbol("reaction.$(rxn.name).k₋"), rxn.k₋),
+            k⁺ = get(parameters, Symbol("reaction.$(rxn.name).k⁺"), rxn.k⁺),
+            k⁻ = get(parameters, Symbol("reaction.$(rxn.name).k⁻"), rxn.k⁻),
         )
         for rxn in definition.reactions
     ]
@@ -727,20 +764,24 @@ function regulation(
                 if definition.promoter_model === :switching
                     [
                         # ...activation (by tempering promoter deactivation)
-                        Reaction(
+                        annotate(Reaction(
                             deactivation_rate(target),
                             [genes[target.name].active],
                             target.unique ? nothing : [genes[target.name].inactive],
                             only_use_rate = true
-                        )
+                        ), :deactivation;
+                            owner=target.name,
+                            parameters=Dict(:rate => Symbol("$(target.name).deactivation")))
 
                         # ...repression (by tempering promoter activation)
-                        Reaction(
+                        annotate(Reaction(
                             activation_rate(target),
                             target.unique ? nothing : [genes[target.name].inactive],
                             [genes[target.name].active],
                             only_use_rate = true
-                        )
+                        ), :activation;
+                            owner=target.name,
+                            parameters=Dict(:rate => Symbol("$(target.name).activation")))
                     ]
                 elseif definition.promoter_model === :equilibrium
                     polymerases = species_variable(definition.polymerases; t)
@@ -749,27 +790,33 @@ function regulation(
                         (species_reference(slot.from; t, genes) => Int8(1) for slot in target.activation.slots)...
                         (species_reference(slot.from; t, genes) => Int8(-1) for slot in target.repression.slots)...
                     ]
-                    Reaction(
+                    annotate(Reaction(
                         trigger_rate(target) * p_active(target),
                         [polymerases],
                         [genes[target.name].elongations];
                         metadata = [:propensity_directions => directions]
-                    )
+                    ), :trigger;
+                        owner=target.name,
+                        parameters=Dict(:rate => Symbol("$(target.name).trigger")))
                 end,
                 # ...repression (by proteolysis)
                 map(target.proteolysis.slots) do (; from, k)
                     proteases = species_reference(from; t, genes)
                     proteins = genes[target.name].proteins
                     k_symbolic = make_parameter(Symbol("$(target.name).proteolysis.$(from).k"), k)
-
-                    if from == target.name
-                        # This is a loop in the proteolysis repression network
-                        # and means that the protein decays without another
-                        # protease.
-                        Reaction(k_symbolic, [proteins], [proteins], [2], [1])
-                    else
-                        Reaction(k_symbolic, [proteases, proteins], [proteases])
-                    end
+                    reaction =
+                        if from == target.name
+                            # This is a loop in the proteolysis repression network
+                            # and means that the protein decays without another
+                            # protease.
+                            Reaction(k_symbolic, [proteins], [proteins], [2], [1])
+                        else
+                            Reaction(k_symbolic, [proteases, proteins], [proteases])
+                        end
+                    annotate(reaction, :proteolysis;
+                        owner=target.name,
+                        from,
+                        parameters=Dict(:rate => Symbol("$(target.name).proteolysis.$(from).k")))
                 end
             )
         end
@@ -778,28 +825,38 @@ function regulation(
         # Bidirectional pairs are broken up, and reactions are only included if
         # their rate is nonzero.
         [
-            Reaction(
-                # need to use :k⁺ instead of :k₊ because ₊ is used as a scope separator in MTK
-                make_parameter(Symbol("reaction.$(name).k⁺"), k₊),
+            annotate(Reaction(
+                # need to use :k⁺ instead of :k⁺ because ₊ is used as a scope separator in MTK
+                make_parameter(Symbol("reaction.$(name).k⁺"), k⁺),
                 species_reference.(keys(from.counts); t, genes),
                 species_reference.(keys(to.counts); t, genes),
                 collect(values(from.counts)),
                 collect(values(to.counts)),
-            )
-            for (; name, from, k₊, to) in definition.reactions
-            if k₊ > 0.0
+            ), :auxiliary;
+                name,
+                direction=:forward,
+                parameters=Dict(
+                    :k⁺ => Symbol("reaction.$(name).k⁺")
+                ))
+            for (; name, from, k⁺, to) in definition.reactions
+            if k⁺ > 0.0
         ]
 
         [
-            Reaction(
-                make_parameter(Symbol("reaction.$(name).k₋"), k₋),
+            annotate(Reaction(
+                make_parameter(Symbol("reaction.$(name).k⁻"), k⁻),
                 species_reference.(keys(to.counts); t, genes),
                 species_reference.(keys(from.counts); t, genes),
                 collect(values(to.counts)),
                 collect(values(from.counts)),
-            )
-            for (; name, from, k₋, to) in definition.reactions
-            if k₋ > 0.0
+            ), :auxiliary;
+                name,
+                direction=:reverse,
+                parameters=Dict(
+                    :k⁻ => Symbol("reaction.$(name).k⁻")
+                ))
+            for (; name, from, k⁻, to) in definition.reactions
+            if k⁻ > 0.0
         ]
     ]
 end

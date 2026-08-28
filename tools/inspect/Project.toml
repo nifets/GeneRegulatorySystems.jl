@@ -12,6 +12,7 @@ GeneRegulatorySystems = "321a2579-640d-4198-9790-c715c19becf3"
 GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JumpProcesses = "ccbc3e58-028d-4f4c-8cd5-9ae44345cda5"
 LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
@@ -19,4 +20,5 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
 
 [compat]
+JumpProcesses = "9.29.2"
 julia = "1.11"

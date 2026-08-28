@@ -348,12 +348,13 @@ e.g. to be added to a `JumpModel`.
 As a convenience, `"rates": [<forward>, <reverse>]` may alternatively by written
 as `"rate": <forward>`, setting `<reverse>` to zero.
 """
-@kwdef struct Reaction
+@kwdef struct Reaction{FR, RR}
     name::Symbol
     from::Reagents = Reagents()
     to::Reagents = Reagents()
-    k₊::Float64 = 0.0
-    k₋::Float64 = 0.0
+    k⁺::FR = 0.0
+    k⁻::RR = 0.0
+    properties::Dict{Symbol, Any} = Dict{Symbol, Any}()
 end
 
 Specifications.cast(::Type{Vector{Reaction}}, xs::AbstractVector; context) = [
@@ -369,9 +370,9 @@ Specifications.cast(::Type{Reaction}, x::AbstractDict{Symbol}; context) =
     @invoke Specifications.cast(
         Reaction::Type,
         if haskey(x, :rates)
-            merge(x, Dict(zip((:k₊, :k₋), x[:rates])))
+            merge(x, Dict(zip((:k⁺, :k⁻), x[:rates])))
         elseif haskey(x, :rate)
-            merge(x, Dict(:k₊ => x[:rate]))
+            merge(x, Dict(:k⁺ => x[:rate]))
         else
             error("missing rates in reaction specification")
         end::AbstractDict{Symbol};
@@ -397,7 +398,7 @@ Specifications.representation(x::Reaction) = Dict{Symbol, Any}(
     :name => Specifications.representation(x.name),
     :from => Specifications.representation(x.from),
     :to => Specifications.representation(x.to),
-    :rates => [x.k₊, x.k₋]
+    :rates => [x.k⁺, x.k⁻]
 )
 
 abstract type Description end
@@ -417,15 +418,22 @@ end
     label::String = ""
 end
 
-@kwdef struct Network <: Description
+@kwdef struct RegulatoryNetwork <: Description
     species_groups::Vector{Symbol}
     links
-    aliases::Dict{Symbol, Symbol} = Dict{Symbol, Symbol}()
+    shared_species::Set{Symbol} = Set{Symbol}()
 end
 
-@kwdef struct ReactionNetwork <: Description
-    reactions::Vector{Reaction} = Reaction[]
+@kwdef struct ReactionNetwork{R<:Reaction} <: Description
+    reactions::Vector{R} = Reaction[]
 end
+
+species(network::ReactionNetwork) = unique(Symbol[
+    species
+    for reaction in network.reactions
+    for reagents in (reaction.from, reaction.to)
+    for species in keys(reagents.counts)
+])
 
 describe(::Any) = EmptyDescription()
 describe(wrapped::Wrapped) = Provenance(

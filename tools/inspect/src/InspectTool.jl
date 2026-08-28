@@ -29,6 +29,7 @@ end
     index::DataFrame
     events::Union{Dict{Symbol, Dict{Int, Catenation}}, Nothing}
     model::Union{Models.Description, Nothing}
+    network::Union{NetworkRepresentation.Network, Nothing}
     groups::Union{Vector{String}, Nothing}
     group_colors::Visualization.GroupColors
     adjacents::AdjacentPrefixes
@@ -313,18 +314,33 @@ function prepare(index; selection = Selection(), location)
     if isempty(model_locators)
         model_locators = unique(index.model)
     end
-    model =
-        if length(model_locators) == 1
-            Models.describe(
-                # The seed will never be accessed because it will be overridden
-                # in the loaded experiment specification.
-                Common.reify(only(model_locators), seed = nothing; location)
-            )
-        else
-            nothing
+    models = [
+        let model = Common.reify(locator, seed=nothing; location)
+            (; locator, model, description=Models.describe(model))
         end
-
-    PreparedData(; index, events, groups, group_colors, model, adjacents)
+        for locator in model_locators
+    ]
+    model = if isempty(models)
+        nothing
+    elseif length(models) == 1
+        only(models).description
+    else
+        Models.Descriptions(Models.Description[item.description for item in models])
+    end
+    network = isempty(models) ? nothing :
+        NetworkRepresentation.merge_networks(
+            (
+                NetworkRepresentation.Network(
+                    item.locator,
+                    item.description;
+                    parameters=Dict{Symbol, Float64}(
+                        Models.parameters(item.model)
+                    )
+                )
+                for item in models
+            )...
+        )
+    PreparedData(; index, events, groups, group_colors, model, network, adjacents)
 end
 
 function attach_display!(figure, ::Val{:selector}; data, selection, _...)
@@ -439,7 +455,7 @@ function attach_display!(figure, ::Val{:model}; data, _...)
             tellheight = false,
         )
     else
-        Visualization.attach_model!(figure, data.model; data.group_colors)
+        Visualization.attach_model!(figure, data.model; data.group_colors, network=data.network)
     end
 end
 
@@ -578,8 +594,6 @@ function main(;
 end
 
 @setup_workload begin
-    get(ENV, "JULIA_PKG_PRECOMPILE_AUTO", "1") == "0" &&
-        error("Precompilation triggered implicitly; this should not happen.")
 
     mktempdir() do temporary
         location = "$temporary/"

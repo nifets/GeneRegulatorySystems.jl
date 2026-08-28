@@ -199,7 +199,7 @@ end
     is::Vector{Int64} = Int64[]
     ts::Vector{Float64} = Float64[]
     names::Vector{Symbol} = Symbol[]
-    values::Vector{Int64} = Int64[]
+    values::Vector{Float64} = Float64[]
 end
 
 @kwdef mutable struct Sink
@@ -290,7 +290,7 @@ function (sink::Sink)(
     end
     channel = get!(Channel, sink.channels, into)
     count = 0
-    Models.each_event(state) do t::Float64, name::Symbol, value::Int64
+    Models.each_event(state) do t, name, value
         if length(channel.values) ≥ sink.threshold
             flush!(sink, into)
             channel = sink.channels[into] = Channel()
@@ -392,8 +392,6 @@ function main(;
 end
 
 @setup_workload begin
-    get(ENV, "JULIA_PKG_PRECOMPILE_AUTO", "1") == "0" &&
-        error("Precompilation triggered implicitly; this should not happen.")
 
     specification = "$(@__DIR__)/precompile.schedule.json"
     mktempdir() do location

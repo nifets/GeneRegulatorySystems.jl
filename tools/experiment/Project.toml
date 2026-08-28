@@ -9,6 +9,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 GeneRegulatorySystems = "321a2579-640d-4198-9790-c715c19becf3"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JumpProcesses = "ccbc3e58-028d-4f4c-8cd5-9ae44345cda5"
 LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
@@ -18,4 +19,5 @@ TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
+JumpProcesses = "9.29.2"
 julia = "1.11"

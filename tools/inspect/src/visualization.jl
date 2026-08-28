@@ -5,7 +5,7 @@ using ..Common: Dimension
 import Colors: Colors, Color, @colorant_str
 using DataFrames
 using Makie
-using GeneRegulatorySystems: Models, Scheduling
+using GeneRegulatorySystems: Models, Scheduling, NetworkRepresentation
 import Graphs
 import GraphMakie
 
@@ -338,11 +338,13 @@ function attach_model!(
     figure,
     provenance::Models.Provenance;
     group_colors,
+    network=NetworkRepresentation.Network(provenance),
     _...,
 )
     grid = GridLayout()
 
-    actual, sources = Iterators.peel(provenance_chain(provenance))
+    actual = network
+    sources = provenance_chain(provenance.source)
     i = 1
     grid[i, 1] = attach_model!(figure, actual; group_colors)
     for source in sources
@@ -373,211 +375,315 @@ end
 
 function attach_model!(
     figure,
-    composite::Models.Descriptions;
+    descriptions::Models.Descriptions;
     group_colors,
+    network=NetworkRepresentation.Network(descriptions),
     _...,
 )
-    components = Dict(typeof(d) => d for d in composite.descriptions)
-    attach_model!(
-        figure,
-        components[Models.Network],
-        get(Models.Label, components, Models.Label),
-        get(Models.ReactionNetwork, components, Models.ReactionNetwork);
-        group_colors,
-    )
+    label = findfirst(x -> x isa(Models.Label), descriptions.descriptions)
+    title = label === nothing ? "" : descriptions.descriptions[label].label
+    attach_model!(figure, network; group_colors, title)
 end
 
 function attach_model!(
     figure,
-    network::Models.Network,
-    label::Models.Label,
-    reactions::Models.ReactionNetwork;
+    description::Union{
+        Models.RegulatoryNetwork,
+        Models.ReactionNetwork
+    };
     group_colors,
+    network=NetworkRepresentation.Network(description),
     _...,
 )
-    axis = Axis(figure, autolimitaspect = 1, title = label.label)
+    attach_model!(figure, network; group_colors)
+end
 
-    node_style = (color = :gray, strokecolor = :gray)
+function attach_model!(
+    figure,
+    network::NetworkRepresentation.Network;
+    group_colors,
+    title="",
+    _...,
+)
+    gene_axis = Axis(figure; autolimitaspect=1, title)
+    species_axis = Axis(figure; autolimitaspect=1, title)
+    panel = GridLayout()
+    panel[1,1] = gene_axis
+    panel[1,1] = species_axis
+    axes = Dict(:gene_view => gene_axis, :species_view => species_axis)
+
+    networks = Dict(
+        :gene_view => NetworkRepresentation.gene_view(network),
+        :species_view => NetworkRepresentation.species_view(network),
+    )
+
+    for (view, axis) in axes
+        plot = attach_network!(axis, networks[view], group_colors; full_network=network)
+        hidespines!(axis)
+        hidedecorations!(axis)
+        deregister_interaction!(axis, :rectanglezoom)
+        register_interaction!(axis, :nodedrag, GraphMakie.NodeDrag(plot))
+    end
+
+    selector = Menu(
+        figure;
+        options=[
+            ("gene view", :gene_view),
+            ("species view", :species_view),
+        ],
+        default="gene view",
+        width=120,
+    )
+
+    controls = GridLayout(panel[1, 1]; tellwidth=false, tellheight=false, halign=:right, valign=:top)
+    controls[1, 1] = selector
+
+    function show_view(view)
+        view === nothing && return
+        for (name, axis) in axes
+            name === view ? Makie.unhide!(axis) : Makie.hide!(axis)
+        end
+        autolimits!(axes[view])
+    end
+
+    on(show_view, selector.selection)
+    show_view(:gene_view)
+
+    panel
+end
+
+function attach_network!(
+    axis,
+    network::NetworkRepresentation.Network,
+    group_colors;
+    full_network=network
+)
+    nodes = network.nodes
+    node_index = Dict(node.name => i for (i, node) in enumerate(nodes))
+    length(node_index) == length(nodes) || error("network node names must be unique")
+
+    for link in network.links
+        haskey(node_index, link.from) || error("missing network node $(link.from)")
+        haskey(node_index, link.to) || error("missing network node $(link.to)")
+    end
+
+
+    format_property(value, ::Val) = string(value)
+    format_property(value::Real, ::Val) = @sprintf("%.2g", value)
+    format_property(value::Real, ::Val{:stoichiometry}) = string(Int(value))
+    format_property(value, key::Symbol) = format_property(value, Val(key))
+
+    function properties_label(properties)
+        entries = [key => value for (key, value) in properties if key !== :parameters]
+        isempty(entries) && return ""
+        if length(entries) == 1
+            key, value = only(entries)
+            return format_property(value, key)
+        end
+        join(("$key=$(format_property(value, key))" for (key, value) in entries), " ")
+    end
+
+    node_label(node) = node_label(Val(node.kind), node)
+    node_label(::Val, node) = string(node.name)
+    node_label(::Val{:reaction}, node) = string(get(node.properties, :kind, node.name))
+
+    parent_color(::Nothing, _colors, fallback) = fallback
+    parent_color(parent::Symbol, colors, _fallback) = colors[parent]
+
+    node_color(node) = node_color(Val(node.kind), node)
+    node_color(::Val, _node) = :white
+    node_color(::Val{:gene}, node) = group_colors[node.name]
+    node_color(::Val{:species}, node) = parent_color(node.parent, group_colors, :white)
+    node_color(::Val{:reaction}, _node) = :black
+
+    node_styles = Dict(
+        :gene     => (; marker=:circle,  size=0.70, fontsize=0.4),
+        :species  => (; marker=:circle,  size=0.25, fontsize=0.25),
+        :reaction => (; marker=:diamond, size=0.05, fontsize=0.2),
+    )
+    node_style(node) = get(node_styles, node.kind, node_styles[:species])
+    styles = node_style.(nodes)
+
+    function reaction_side(network, reaction, kind)
+        links = filter(network.links) do link
+            link.kind === kind &&
+                (kind === :substrate ? link.to : link.from) === reaction.name
+        end
+        isempty(links) && return "∅"
+        join((
+            begin
+                species = kind === :substrate ? link.from : link.to
+                stoichiometry = get(link.properties, :stoichiometry, 1)
+                stoichiometry == 1 ? string(species) : "$stoichiometry $species"
+            end
+            for link in links
+        ), " + ")
+    end
+
+    function parameter_lines(item, network)
+        associations = get(item.properties, :parameters, Dict())
+        paths = isempty(item.present_in) ? keys(network.parameters) : item.present_in
+        lines = String[]
+        for (label, parameter) in associations
+            values = unique(
+                network.parameters[path][parameter]
+                for path in paths
+                if haskey(network.parameters, path) &&
+                    haskey(network.parameters[path], parameter)
+            )
+            isempty(values) && continue
+            push!(lines, "$label = $(join(format_property.(values, Ref(label)), ", "))")
+        end
+        lines
+    end
+
+    node_tooltip(node, network) = node_tooltip(Val(node.kind), node, network)
+    node_tooltip(::Val, node, _network) = string(node.name)
+    node_tooltip(::Val{:gene}, node, _network) = "gene $(node.name)"
+    function node_tooltip(::Val{:reaction}, node, network)
+        kind = get(node.properties, :kind, :reaction)
+        heading = node.parent === nothing ? string(kind) : "$kind on $(node.parent)"
+        arrow = iszero(get(node.properties, :k⁻, 0)) ? "->" : "⇌"
+        equation = join((
+            reaction_side(network, node, :substrate),
+            reaction_side(network, node, :product),
+        ), " $arrow ")
+        join((heading, equation, parameter_lines(node, network)...), "\n")
+    end
+
+    links_by_edge = Dict{Pair{Int, Int}, Vector{NetworkRepresentation.Link}}()
+    for link in network.links
+        edge = node_index[link.from] => node_index[link.to]
+        push!(get!(links_by_edge, edge, NetworkRepresentation.Link[]), link)
+    end
+
     edge_styles = Dict(
-        :activation => (color = :black, linestyle = :solid),
-        :repression => (color = :red, linestyle = :solid),
-        :proteolysis => (color = :red, linestyle = :dash),
-        :multiple => (color = :darkred, linestyle = :dash),
-        :massaction => (color = :gray, linestyle = :solid),
+        :activation  => (; color=:darkgreen,  linestyle=:solid, linewidth=3.0, marker=:rtriangle, fontsize=0.15),
+        :repression  => (; color=:darkred,    linestyle=:solid, linewidth=3.0, marker=:rect, fontsize=0.15),
+        :proteolysis => (; color=:darkred,    linestyle=:solid, linewidth=2.5, marker=:diamond, fontsize=0.15),
+        :promotes    => (; color=:green4,     linestyle=:dash,  linewidth=1.3, marker=:rtriangle, fontsize=0.1),
+        :inhibits    => (; color=:darkred,    linestyle=:dash,  linewidth=1.3, marker=:rect, fontsize=0.1),
+        :catalyses   => (; color=:darkorange, linestyle=:dash,  linewidth=1.3, marker=:circle, fontsize=0.1),
+        :substrate   => (; color=:gray,       linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
+        :product     => (; color=:gray,       linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
+        :multiple    => (; color=:black,      linestyle=:solid, linewidth=5.0, marker=:rtriangle, fontsize=0.3),
     )
 
-    ungrouped = Symbol[]
-    for reaction in reactions.reactions
-        reagents = Iterators.flatten((reaction.from.counts, reaction.to.counts))
-        for (species, _count) in reagents
-            union!(ungrouped, (get(network.aliases, species, species),))
+
+    edge_properties = Dict(
+        edge => if length(links) == 1
+            link = only(links)
+            (;
+                label = properties_label(link.properties),
+                get(edge_styles, link.kind, edge_styles[:substrate])...
+            )
+        else
+            (;
+                label=join(("$(link.kind): $(properties_label(link.properties))" for link in links), "\n"),
+                edge_styles[:multiple]...
+            )
         end
-    end
-    setdiff!(ungrouped, network.species_groups)
-
-    nodes = [
-        map(network.species_groups) do g
-            properties = (;
-                node_style...,
-                label = "",
-                color = group_colors[g],
-                strokecolor = :black,
-                size = 16,
-            )
-            (:species, g, properties)
-        end
-
-        map(ungrouped) do s
-            properties = (;
-                node_style...,
-                label = "",
-                color = :white,
-                size = 8,
-            )
-            (:species, s, properties)
-        end
-
-        [
-            (
-                :forward_reaction,
-                i,
-                (; node_style..., label = @sprintf("%.2g", r.k₊), size = 3)
-            )
-            for (i, r) in enumerate(reactions.reactions)
-            if r.k₊ > 0.0
-        ]
-
-        [
-            (
-                :backward_reaction,
-                i,
-                (; node_style..., label = @sprintf("%.2g", r.k₋), size = 3)
-            )
-            for (i, r) in enumerate(reactions.reactions)
-            if r.k₋ > 0.0
-        ]
-    ]
-
-    nodes_index = Dict(
-        (kind, node) => i
-        for (i, (kind, node, _properties)) in enumerate(nodes)
+        for (edge, links) in links_by_edge
     )
-    for (alias, species) in network.aliases
-        nodes_index[(:species, alias)] = nodes_index[(:species, species)]
-    end
 
-    links_by_edge = reduce(network.links, init = Dict()) do by_edge, link
-        source = get(nodes_index, (:species, link.from), nothing)
-        target = get(nodes_index, (:species, link.to), nothing)
-        if source !== nothing && target !== nothing
-            push!(get!(Vector, by_edge, source => target), link)
-        end
-        by_edge
-    end
+    edge_tooltip(links) = join(unique(string(link.kind) for link in links), "\n")
 
-    edges = Dict()
-    for (edge, links) in links_by_edge
-        edges[edge] =
-            if length(links) == 1
-                link = only(links)
-                value = link.properties[link.kind == :proteolysis ? :k : :at]
-                (; label = @sprintf("%.2g", value), edge_styles[link.kind]...)
-            else
-                values = ["", "", ""]
-                for link in links
-                    if link.kind == :activation
-                        values[1] = @sprintf("%.2g", link.properties[:at])
-                    elseif link.kind == :repression
-                        values[2] = @sprintf("%.2g", link.properties[:at])
-                    elseif link.kind == :proteolysis
-                        values[3] = @sprintf("%.2g", link.properties[:k])
-                    end
-                end
-                (; label = join(values, "/"), edge_styles[:multiple]...)
-            end
-    end
 
-    for (i, reaction) in enumerate(reactions.reactions)
-        forward_node = get(nodes_index, (:forward_reaction, i), nothing)
-        if forward_node !== nothing
-            for (source, count) in reaction.from.counts
-                source_node = nodes_index[(:species, source)]
-                edges[source_node => forward_node] =
-                    (; label = string(count), edge_styles[:massaction]...)
-            end
-            for (target, count) in reaction.to.counts
-                target_node = nodes_index[(:species, target)]
-                edges[forward_node => target_node] =
-                    (; label = string(count), edge_styles[:massaction]...)
-            end
-        end
-
-        backward_node = get(nodes_index, (:backward_reaction, i), nothing)
-        if backward_node !== nothing
-            for (source, count) in reaction.to.counts
-                source_node = nodes_index[(:species, source)]
-                edges[source_node => backward_node] =
-                    (; label = string(count), edge_styles[:massaction]...)
-            end
-            for (target, count) in reaction.from.counts
-                target_node = nodes_index[(:species, target)]
-                edges[backward_node => target_node] =
-                    (; label = string(count), edge_styles[:massaction]...)
-            end
-        end
-    end
 
     graph = Graphs.DiGraph(length(nodes))
-    Graphs.add_edge!.(Ref(graph), keys(edges))
+    Graphs.add_edge!.(Ref(graph), keys(edge_properties))
+    edges = collect(Graphs.edges(graph))
+    edge_property(edge) = edge_properties[Graphs.src(edge) => Graphs.dst(edge)]
+    edge_colors = [edge_property(edge).color for edge in edges]
+    edge_linestyles = [edge_property(edge).linestyle for edge in edges]
+    edge_widths = [edge_property(edge).linewidth for edge in edges]
+    edge_labels = [edge_property(edge).label for edge in edges]
+    edge_markers = [edge_property(edge).marker for edge in edges]
+    edge_markersizes = [
+        marker === :rect ? Vec2f(0.08, 0.2) : Vec2f(0.2, 0.2)
+        for marker in edge_markers
+    ]
+    edge_fontsizes = [edge_property(edge).fontsize for edge in edges]
 
-    node_properties(property) = map(nodes) do (_, _, node)
-        getproperty(node, property)
-    end
-
-    edge_properties(property) = map(Graphs.edges(graph)) do edge
-        getproperty(edges[Graphs.src(edge) => Graphs.dst(edge)], property)
-    end
-
-    edge_attributes = Graphs.ne(graph) == 0 ? (;) : (
-        elabels = edge_properties(:label),
-        elabels_color = edge_properties(:color),
-        elabels_distance = 12,
-        elabels_fontsize = 8,
-        edge_plottype = :beziersegments,
-        edge_attr = (
-            linestyle = edge_properties(:linestyle),
-            color = edge_properties(:color),
-        ),
-        arrow_attr = (
-            markersize = 16,
-            color = edge_properties(:color),
-        ),
+    edge_attributes = isempty(edges) ? (;) : (
+        elabels=edge_labels,
+        elabels_color=edge_colors,
+        elabels_distance=0.2,
+        elabels_fontsize=edge_fontsizes,
+        elabels_attr=(markerspace=:data,),
+        edge_plottype=:linesegments,
+        edge_attr=(color=edge_colors, linestyle=edge_linestyles, linewidth=edge_widths),
+        arrow_attr=(
+            markerspace=:data,
+            color=edge_colors,
+            marker=edge_markers,
+            markersize=edge_markersizes,
+        )
     )
 
-    GraphMakie.graphplot!(
-        axis,
-        graph,
-        nlabels = node_properties(:label),
-        nlabels_fontsize = 8,
-        nlabels_distance = 3,
-        nlabels_color = :gray,
-        node_size = node_properties(:size),
-        node_strokewidth = 2,
-        node_attr = (; strokecolor = node_properties(:strokecolor),),
-        node_color = node_properties(:color);
+    function arrow_shifts(positions)
+        map(edges) do edge
+            source = Graphs.src(edge)
+            target = Graphs.dst(edge)
+            marker = edge_property(edge).marker
+            source == target && return marker === :rtriangle ? 0.94 : 0.9
+            distance = sqrt(sum(abs2, positions[target] - positions[source]))
+            radius = styles[target].size / 2
+            extent = marker === :rtriangle ? 0.1 : marker === :rect ? 0.02 : 0.15
+            clamp(1 - (radius + extent) / distance, 0.0, 1.0)
+        end
+    end
+
+    plot = GraphMakie.graphplot!(
+        axis, graph;
+        arrow_shift=0.92,
+        nlabels=node_label.(nodes),
+        nlabels_align=(:center, :bottom),
+        nlabels_distance=0.2,
+        nlabels_fontsize=getproperty.(styles, :fontsize),
+        nlabels_color=:black,
+        nlabels_attr=(markerspace=:data,),
+        node_size=getproperty.(styles, :size),
+        node_color=node_color.(nodes), node_strokewidth=2,
+        node_attr=(
+            markerspace=:data,
+            marker=getproperty.(styles, :marker),
+            strokecolor=:black
+        ),
         edge_attributes...
     )
-
-    hidespines!(axis)
-    hidedecorations!(axis)
-    deregister_interaction!(axis, :rectanglezoom)
-    register_interaction!(
-        axis,
-        :nodedrag,
-        GraphMakie.NodeDrag(only(axis.scene.plots))
+    update_arrows(positions) = plot[:arrow_shift][] = arrow_shifts(positions)
+    on(update_arrows, plot[:node_pos])
+    update_arrows(plot[:node_pos][])
+    node_tip = Makie.tooltip!(axis, Observable(Point2f(0)); text=Observable(""), visible=false, fontsize=10, backgroundcolor=:white, transparency=false, overdraw=true, textpadding=(3,3,2,2), outline_linewidth=1)
+    edge_tip = Makie.tooltip!(axis, Observable(Point2f(0)); text=Observable(""), visible=false, fontsize=10, backgroundcolor=:white, transparency=false, overdraw=true, textpadding=(3,3,2,2), outline_linewidth=1)
+    for tip in (node_tip, edge_tip)
+        tip.plots[1].draw_on_top[] = true
+        tip.plots[1].alpha[] = 1.0
+    end
+    register_interaction!(axis, :node_tooltip,
+        GraphMakie.NodeHoverHandler() do state, index, _event, _axis
+            if state
+                node_tip[1][] = plot[:node_pos][][index]
+                node_tip.text[] = node_tooltip(nodes[index], full_network)
+            end
+            node_tip.visible[] = state
+        end
     )
-
-    axis
+    register_interaction!(axis, :edge_tooltip,
+        GraphMakie.EdgeHoverHandler() do state, index, event, _axis
+            if state
+                edge = edges[index]
+                links = links_by_edge[
+                    Graphs.src(edge) => Graphs.dst(edge)
+                ]
+                edge_tip[1][] = event.data
+                edge_tip.text[] = edge_tooltip(links)
+            end
+            edge_tip.visible[] = state
+        end
+    )
+    plot
 end
 
 end
