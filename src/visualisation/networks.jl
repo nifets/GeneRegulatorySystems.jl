@@ -1,6 +1,3 @@
-module NetworkRepresentation
-
-using ..Models
 
 @kwdef struct Node
     name::Symbol
@@ -96,17 +93,17 @@ function Network(path::String, description::Models.Description;parameters=Dict{S
     )
 end
 
+function gene_of(species::Symbol, groups)
+    index = findfirst(gene -> startswith(String(species), string(gene, ".")), groups)
+    isnothing(index) ? nothing : groups[index]
+end
+
 function merge_networks(networks::Network...)
     isempty(networks) && return Network()
     nodes = Dict{Tuple{Symbol, Symbol}, Node}()
     links = Dict{Tuple{Symbol, Symbol, Symbol}, Link}()
 
     groups = unique(Symbol[group for n in networks for group in n.groups])
-
-    function gene_of(species::Symbol, groups)
-        index = findfirst(gene -> startswith(String(species), string(gene, ".")), groups)
-        isnothing(index) ? nothing : groups[index]
-    end
 
     for network in networks
         for node in network.nodes
@@ -212,4 +209,120 @@ function gene_view(network::Network; include_shared=false)
     Network(nodes=nodes, links=links, groups=network.groups, parameters=network.parameters)
 end
 
+
+format_property(value, ::Val) = string(value)
+format_property(value::Real, ::Val) = @sprintf("%.2g", value)
+format_property(value::Integer, ::Val{:stoichiometry}) = string(value)
+format_property(value, key::Symbol) = format_property(value, Val(key))
+
+function properties_label(properties)
+    entries = [
+        key => value
+        for (key, value) in properties
+        if key !== :parameters
+    ]
+
+    isempty(entries) && return ""
+
+    if length(entries) == 1
+        key, value = only(entries)
+        return format_property(value, key)
+    end
+
+    join(
+        ("$key=$(format_property(value, key))" for (key, value) in entries),
+        " ",
+    )
+end
+
+node_label(node::Node) = node_label(Val(node.kind), node)
+node_label(::Val, node) = string(node.name)
+node_label(::Val{:reaction}, node) =
+    string(get(node.properties, :kind, node.name))
+
+link_label(link::Link) = link_label(Val(link.kind), link)
+link_label(::Val, link) = properties_label(link.properties)
+link_label(::Val{:substrate}, link) = nothing
+link_label(::Val{:product}, link) = nothing
+
+function reaction_side(network, reaction, kind)
+    links = filter(network.links) do link
+        link.kind === kind &&
+            (kind === :substrate ? link.to : link.from) === reaction.name
+    end
+
+    isempty(links) && return "∅"
+
+    join((
+        begin
+            species = kind === :substrate ? link.from : link.to
+            stoichiometry = get(link.properties, :stoichiometry, 1)
+            stoichiometry == 1 ? string(species) : "$stoichiometry $species"
+        end
+        for link in links
+    ), " + ")
+end
+
+function parameter_lines(item, network)
+    associations = get(item.properties, :parameters, Dict())
+    paths = isempty(item.present_in) ?
+        keys(network.parameters) :
+        item.present_in
+
+    lines = String[]
+
+    for (label, parameter) in associations
+        values = unique(
+            network.parameters[path][parameter]
+            for path in paths
+            if haskey(network.parameters, path) &&
+               haskey(network.parameters[path], parameter)
+        )
+
+        isempty(values) && continue
+
+        push!(
+            lines,
+            "$label = $(join(format_property.(values, Ref(label)), ", "))",
+        )
+    end
+
+    lines
+end
+
+node_tooltip(node::Node, network::Network) =
+    node_tooltip(Val(node.kind), node, network)
+
+node_tooltip(::Val, node, network) = string(node.name)
+node_tooltip(::Val{:gene}, node, network) = "gene $(node.name)"
+
+function node_tooltip(::Val{:reaction}, node, network)
+    kind = get(node.properties, :kind, :reaction)
+    heading = node.parent === nothing ?
+        string(kind) :
+        "$kind on $(node.parent)"
+
+    arrow = iszero(get(node.properties, :k⁻, 0)) ? "→" : "⇌"
+
+    equation = join((
+        reaction_side(network, node, :substrate),
+        reaction_side(network, node, :product),
+    ), " $arrow ")
+
+    join((heading, equation, parameter_lines(node, network)...), "\n")
+end
+
+link_tooltip(link::Link, network::Network) =
+    link_tooltip(Val(link.kind), link, network)
+
+link_tooltip(::Val{:substrate}, link, network) = nothing
+link_tooltip(::Val{:product}, link, network) = nothing
+
+function link_tooltip(::Val, link, network)
+    species_level = link.kind in (:promotes, :inhibits)
+    from = species_level ? link.from : something(gene_of(link.from, network.groups), link.from)
+    to = species_level ? link.to : something(gene_of(link.to, network.groups), link.to)
+    heading = "$(link.kind): $from → $to"
+    parameters = ("  $line" for line in parameter_lines(link, network))
+    join((heading, parameters...), "\n")
 end

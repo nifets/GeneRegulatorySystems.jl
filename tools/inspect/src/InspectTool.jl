@@ -29,7 +29,7 @@ end
     index::DataFrame
     events::Union{Dict{Symbol, Dict{Int, Catenation}}, Nothing}
     model::Union{Models.Description, Nothing}
-    network::Union{NetworkRepresentation.Network, Nothing}
+    network::Union{Visualisation.Network, Nothing}
     groups::Union{Vector{String}, Nothing}
     group_colors::Visualization.GroupColors
     adjacents::AdjacentPrefixes
@@ -328,9 +328,9 @@ function prepare(index; selection = Selection(), location)
         Models.Descriptions(Models.Description[item.description for item in models])
     end
     network = isempty(models) ? nothing :
-        NetworkRepresentation.merge_networks(
+        Visualisation.merge_networks(
             (
-                NetworkRepresentation.Network(
+                Visualisation.Network(
                     item.locator,
                     item.description;
                     parameters=Dict{Symbol, Float64}(

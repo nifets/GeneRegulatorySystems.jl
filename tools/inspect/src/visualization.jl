@@ -2,56 +2,13 @@ module Visualization
 
 using ..Common: Dimension
 
-import Colors: Colors, Color, @colorant_str
 using DataFrames
 using Makie
-using GeneRegulatorySystems: Models, Scheduling, NetworkRepresentation
+using GeneRegulatorySystems: Models, Scheduling, Visualisation
 import Graphs
 import GraphMakie
 
-using Printf
-
-struct GroupColors
-    colors::Dict{String, Color}
-end
-GroupColors(::Nothing; _...) = GroupColors(Dict{String, Color}())
-GroupColors(
-    groups::AbstractVector{String};
-    reserved = [colorant"white", colorant"black", colorant"crimson"],
-    fixed = [
-        # Light group: In Oklch color space, starting with colorant"crimson",
-        # split the hue circle into 12 equidistant colors, increase luminosity
-        # (by 0.2 on the logit scale), then pick 8 colors manually.
-        colorant"#4196FF"
-        colorant"#3CBC0B"
-        colorant"#E38600"
-        colorant"#D864F1"
-        colorant"#A07CFF"
-        colorant"#00C1D3"
-        colorant"#A9A600"
-        colorant"#FB53B1"
-
-        # Dark group: Take the same 8 colors, shift their hue by -15° and
-        # decrease luminosity (by 0.5 on the logit scale).
-        colorant"#004D9D"
-        colorant"#335D00"
-        colorant"#8E2400"
-        colorant"#6C00AB"
-        colorant"#3D30AC"
-        colorant"#006A67"
-        colorant"#6B4900"
-        colorant"#8D007C"
-    ],
-    seed = vcat(reserved, fixed),
-    drop = length(reserved),
-) = GroupColors(Dict(zip(
-    groups,
-    Colors.distinguishable_colors(length(groups) + drop, seed)[(drop + 1):end]
-)))
-
-Base.getindex(colors::GroupColors, group::Symbol) = colors[string(group)]
-Base.getindex(colors::GroupColors, group::String) =
-    get(colors.colors, group, colorant"gray")
+const GroupColors = Visualisation.GroupColors
 
 kindname(kind::Symbol) = kindname(Val(kind))
 kindname(::Val{Kind}) where {Kind} = String(Kind)
@@ -248,7 +205,7 @@ function attach_trajectory_components!(
                     markersize = 2,
                     linewidth = 0.5,
                     linestyle = :dash,
-                    color = colorant"black",
+                    color = :black,
                 )
                 translate!(joint, 0, 0, 1)
             end
@@ -338,7 +295,7 @@ function attach_model!(
     figure,
     provenance::Models.Provenance;
     group_colors,
-    network=NetworkRepresentation.Network(provenance),
+    network=Visualisation.Network(provenance),
     _...,
 )
     grid = GridLayout()
@@ -377,7 +334,7 @@ function attach_model!(
     figure,
     descriptions::Models.Descriptions;
     group_colors,
-    network=NetworkRepresentation.Network(descriptions),
+    network=Visualisation.Network(descriptions),
     _...,
 )
     label = findfirst(x -> x isa(Models.Label), descriptions.descriptions)
@@ -392,7 +349,7 @@ function attach_model!(
         Models.ReactionNetwork
     };
     group_colors,
-    network=NetworkRepresentation.Network(description),
+    network=Visualisation.Network(description),
     _...,
 )
     attach_model!(figure, network; group_colors)
@@ -400,7 +357,7 @@ end
 
 function attach_model!(
     figure,
-    network::NetworkRepresentation.Network;
+    network::Visualisation.Network;
     group_colors,
     title="",
     _...,
@@ -413,8 +370,8 @@ function attach_model!(
     axes = Dict(:gene_view => gene_axis, :species_view => species_axis)
 
     networks = Dict(
-        :gene_view => NetworkRepresentation.gene_view(network),
-        :species_view => NetworkRepresentation.species_view(network),
+        :gene_view => Visualisation.gene_view(network),
+        :species_view => Visualisation.species_view(network),
     )
 
     for (view, axis) in axes
@@ -454,7 +411,7 @@ end
 
 function attach_network!(
     axis,
-    network::NetworkRepresentation.Network,
+    network::Visualisation.Network,
     group_colors;
     full_network=network
 )
@@ -466,26 +423,6 @@ function attach_network!(
         haskey(node_index, link.from) || error("missing network node $(link.from)")
         haskey(node_index, link.to) || error("missing network node $(link.to)")
     end
-
-
-    format_property(value, ::Val) = string(value)
-    format_property(value::Real, ::Val) = @sprintf("%.2g", value)
-    format_property(value::Real, ::Val{:stoichiometry}) = string(Int(value))
-    format_property(value, key::Symbol) = format_property(value, Val(key))
-
-    function properties_label(properties)
-        entries = [key => value for (key, value) in properties if key !== :parameters]
-        isempty(entries) && return ""
-        if length(entries) == 1
-            key, value = only(entries)
-            return format_property(value, key)
-        end
-        join(("$key=$(format_property(value, key))" for (key, value) in entries), " ")
-    end
-
-    node_label(node) = node_label(Val(node.kind), node)
-    node_label(::Val, node) = string(node.name)
-    node_label(::Val{:reaction}, node) = string(get(node.properties, :kind, node.name))
 
     parent_color(::Nothing, _colors, fallback) = fallback
     parent_color(parent::Symbol, colors, _fallback) = colors[parent]
@@ -504,68 +441,21 @@ function attach_network!(
     node_style(node) = get(node_styles, node.kind, node_styles[:species])
     styles = node_style.(nodes)
 
-    function reaction_side(network, reaction, kind)
-        links = filter(network.links) do link
-            link.kind === kind &&
-                (kind === :substrate ? link.to : link.from) === reaction.name
-        end
-        isempty(links) && return "∅"
-        join((
-            begin
-                species = kind === :substrate ? link.from : link.to
-                stoichiometry = get(link.properties, :stoichiometry, 1)
-                stoichiometry == 1 ? string(species) : "$stoichiometry $species"
-            end
-            for link in links
-        ), " + ")
-    end
-
-    function parameter_lines(item, network)
-        associations = get(item.properties, :parameters, Dict())
-        paths = isempty(item.present_in) ? keys(network.parameters) : item.present_in
-        lines = String[]
-        for (label, parameter) in associations
-            values = unique(
-                network.parameters[path][parameter]
-                for path in paths
-                if haskey(network.parameters, path) &&
-                    haskey(network.parameters[path], parameter)
-            )
-            isempty(values) && continue
-            push!(lines, "$label = $(join(format_property.(values, Ref(label)), ", "))")
-        end
-        lines
-    end
-
-    node_tooltip(node, network) = node_tooltip(Val(node.kind), node, network)
-    node_tooltip(::Val, node, _network) = string(node.name)
-    node_tooltip(::Val{:gene}, node, _network) = "gene $(node.name)"
-    function node_tooltip(::Val{:reaction}, node, network)
-        kind = get(node.properties, :kind, :reaction)
-        heading = node.parent === nothing ? string(kind) : "$kind on $(node.parent)"
-        arrow = iszero(get(node.properties, :k⁻, 0)) ? "->" : "⇌"
-        equation = join((
-            reaction_side(network, node, :substrate),
-            reaction_side(network, node, :product),
-        ), " $arrow ")
-        join((heading, equation, parameter_lines(node, network)...), "\n")
-    end
-
-    links_by_edge = Dict{Pair{Int, Int}, Vector{NetworkRepresentation.Link}}()
+    links_by_edge = Dict{Pair{Int, Int}, Vector{Visualisation.Link}}()
     for link in network.links
         edge = node_index[link.from] => node_index[link.to]
-        push!(get!(links_by_edge, edge, NetworkRepresentation.Link[]), link)
+        push!(get!(links_by_edge, edge, Visualisation.Link[]), link)
     end
 
     edge_styles = Dict(
-        :activation  => (; color=:darkgreen,  linestyle=:solid, linewidth=3.0, marker=:rtriangle, fontsize=0.15),
-        :repression  => (; color=:darkred,    linestyle=:solid, linewidth=3.0, marker=:rect, fontsize=0.15),
-        :proteolysis => (; color=:darkred,    linestyle=:solid, linewidth=2.5, marker=:diamond, fontsize=0.15),
-        :promotes    => (; color=:green4,     linestyle=:dash,  linewidth=1.3, marker=:rtriangle, fontsize=0.1),
-        :inhibits    => (; color=:darkred,    linestyle=:dash,  linewidth=1.3, marker=:rect, fontsize=0.1),
-        :catalyses   => (; color=:darkorange, linestyle=:dash,  linewidth=1.3, marker=:circle, fontsize=0.1),
-        :substrate   => (; color=:gray,       linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
-        :product     => (; color=:gray,       linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
+        :activation  => (; color=Visualisation.LINK_COLORS[:activation],  linestyle=:solid, linewidth=3.0, marker=:rtriangle, fontsize=0.15),
+        :repression  => (; color=Visualisation.LINK_COLORS[:repression],  linestyle=:solid, linewidth=3.0, marker=:rect, fontsize=0.15),
+        :proteolysis => (; color=Visualisation.LINK_COLORS[:proteolysis], linestyle=:solid, linewidth=2.5, marker=:diamond, fontsize=0.15),
+        :promotes    => (; color=Visualisation.LINK_COLORS[:promotes],    linestyle=:dash,  linewidth=1.3, marker=:rtriangle, fontsize=0.1),
+        :inhibits    => (; color=Visualisation.LINK_COLORS[:inhibits],    linestyle=:dash,  linewidth=1.3, marker=:rect, fontsize=0.1),
+        :catalyses   => (; color=Visualisation.LINK_COLORS[:catalyses],   linestyle=:dash,  linewidth=1.3, marker=:circle, fontsize=0.1),
+        :substrate   => (; color=Visualisation.LINK_COLORS[:substrate],   linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
+        :product     => (; color=Visualisation.LINK_COLORS[:product],     linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
         :multiple    => (; color=:black,      linestyle=:solid, linewidth=5.0, marker=:rtriangle, fontsize=0.3),
     )
 
@@ -574,19 +464,21 @@ function attach_network!(
         edge => if length(links) == 1
             link = only(links)
             (;
-                label = properties_label(link.properties),
+                label = Visualisation.link_label(link),
                 get(edge_styles, link.kind, edge_styles[:substrate])...
             )
         else
             (;
-                label=join(("$(link.kind): $(properties_label(link.properties))" for link in links), "\n"),
+                label=join(("$(link.kind): $(Visualisation.link_label(link))" for link in links), "\n"),
                 edge_styles[:multiple]...
             )
         end
         for (edge, links) in links_by_edge
     )
 
-    edge_tooltip(links) = join(unique(string(link.kind) for link in links), "\n")
+    edge_tooltip(links) = join(unique(
+        Visualisation.link_tooltip(link, full_network) for link in links
+    ), "\n")
 
 
 
@@ -637,7 +529,7 @@ function attach_network!(
     plot = GraphMakie.graphplot!(
         axis, graph;
         arrow_shift=0.92,
-        nlabels=node_label.(nodes),
+        nlabels=Visualisation.node_label.(nodes),
         nlabels_align=(:center, :bottom),
         nlabels_distance=0.2,
         nlabels_fontsize=getproperty.(styles, :fontsize),
@@ -665,7 +557,7 @@ function attach_network!(
         GraphMakie.NodeHoverHandler() do state, index, _event, _axis
             if state
                 node_tip[1][] = plot[:node_pos][][index]
-                node_tip.text[] = node_tooltip(nodes[index], full_network)
+                node_tip.text[] = Visualisation.node_tooltip(nodes[index], full_network)
             end
             node_tip.visible[] = state
         end
