@@ -1,0 +1,10 @@
+[deps]
+Bonito = "824d6782-a2ef-11e9-3a09-e5662e0c26f8"
+CytoscapeJS = "5d7a634b-b62e-4929-ba77-69c999086e42"
+GeneRegulatorySystems = "321a2579-640d-4198-9790-c715c19becf3"
+HypertextLiteral = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+
+[sources]
+GeneRegulatorySystems = {path = ".."}
+CytoscapeJS = {url = "https://github.com/nifets/CytoscapeJS.jl", rev = "main"}

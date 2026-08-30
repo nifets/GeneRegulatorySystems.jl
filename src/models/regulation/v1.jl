@@ -816,6 +816,7 @@ function regulation(
                     annotate(reaction, :proteolysis;
                         owner=target.name,
                         from,
+                        gene_link=:proteolysis,
                         parameters=Dict(:rate => Symbol("$(target.name).proteolysis.$(from).k")))
                 end
             )
@@ -832,7 +833,7 @@ function regulation(
                 species_reference.(keys(to.counts); t, genes),
                 collect(values(from.counts)),
                 collect(values(to.counts)),
-            ), :auxiliary;
+            ), :reaction;
                 name,
                 direction=:forward,
                 parameters=Dict(
@@ -849,7 +850,7 @@ function regulation(
                 species_reference.(keys(from.counts); t, genes),
                 collect(values(to.counts)),
                 collect(values(from.counts)),
-            ), :auxiliary;
+            ), :reaction;
                 name,
                 direction=:reverse,
                 parameters=Dict(

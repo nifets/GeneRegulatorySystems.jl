@@ -453,7 +453,7 @@ function attach_network!(
         :proteolysis => (; color=Visualisation.LINK_COLORS[:proteolysis], linestyle=:solid, linewidth=2.5, marker=:diamond, fontsize=0.15),
         :promotes    => (; color=Visualisation.LINK_COLORS[:promotes],    linestyle=:dash,  linewidth=1.3, marker=:rtriangle, fontsize=0.1),
         :inhibits    => (; color=Visualisation.LINK_COLORS[:inhibits],    linestyle=:dash,  linewidth=1.3, marker=:rect, fontsize=0.1),
-        :catalyses   => (; color=Visualisation.LINK_COLORS[:catalyses],   linestyle=:dash,  linewidth=1.3, marker=:circle, fontsize=0.1),
+        :affects     => (; color=Visualisation.LINK_COLORS[:affects],     linestyle=:dash,  linewidth=1.3, marker=:circle, fontsize=0.1),
         :substrate   => (; color=Visualisation.LINK_COLORS[:substrate],   linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
         :product     => (; color=Visualisation.LINK_COLORS[:product],     linestyle=:solid, linewidth=1.3, marker=:rtriangle, fontsize=0.1),
         :multiple    => (; color=:black,      linestyle=:solid, linewidth=5.0, marker=:rtriangle, fontsize=0.3),

@@ -53,7 +53,7 @@ const LINK_COLORS = Dict(
     :proteolysis => "#ff7f00",
     :promotes    => "#c4c4cb",
     :inhibits    => "#c4c4cb",
-    :catalyses   => "#3aa6b9",
+    :affects     => "#3aa6b9",
     :substrate   => "#c4c4cb",
     :product     => "#c4c4cb",
 )

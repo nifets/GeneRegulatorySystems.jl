@@ -50,9 +50,10 @@ function Models.Reaction(reaction::Catalyst.Reaction)
         ))
     end
     function reaction_name(properties)
-        kind = properties[:kind]
-        kind === :auxiliary && return Symbol("reaction.", properties[:name])
+        haskey(properties, :name) &&
+            return Symbol("reaction.", properties[:name])
 
+        kind = properties[:kind]
         owner = properties[:owner]
         kind === :proteolysis && return Symbol(owner, ".", kind, ".", properties[:from])
 

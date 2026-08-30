@@ -23,11 +23,33 @@ end
     parameters::Dict{String, Dict{Symbol, Float64}} = Dict{String, Dict{Symbol, Float64}}()
 end
 
+paths(network::Network) = sort!(collect(keys(network.parameters)))
+
 Network(::Models.Description) = Network()
 Network(descriptions::Models.Descriptions) =
     merge_networks(Network.(descriptions.descriptions)...)
-Network(provenance::Models.Provenance) =
-    merge_networks(Network(provenance.source), Network(provenance.description))
+
+function Network(provenance::Models.Provenance)
+    function latest(type, description)
+        description isa type && return Models.Description[description]
+        if description isa Models.Descriptions
+            return mapreduce(
+                item -> latest(type, item),
+                append!,
+                description.descriptions;
+                init=Models.Description[],
+            )
+        end
+        description isa Models.Provenance || return Models.Description[]
+        result = latest(type, description.description)
+        isempty(result) ? latest(type, description.source) : result
+    end
+
+    merge_networks(
+        Network.(latest(Models.RegulatoryNetwork, provenance))...,
+        Network.(latest(Models.ReactionNetwork, provenance))...,
+    )
+end
 
 function Network(network::Models.RegulatoryNetwork)
     nodes = vcat(
@@ -50,11 +72,18 @@ function Network(network::Models.ReactionNetwork)
         parent = get(reaction.properties, :owner, nothing)
         scope = parent === nothing ? :all : :species
         properties = Dict{Symbol, Any}(
-            :kind => get(reaction.properties, :kind, :auxiliary),
+            :kind => get(reaction.properties, :kind, :reaction),
+            :name => get(
+                reaction.properties,
+                :name,
+                get(reaction.properties, :kind, reaction.name),
+            ),
             :k⁺ => reaction.k⁺,
             :k⁻ => reaction.k⁻
         )
-        haskey(reaction.properties, :parameters) && (properties[:parameters] = reaction.properties[:parameters])
+        for key in (:parameters, :gene_link)
+            haskey(reaction.properties, key) && (properties[key] = reaction.properties[key])
+        end
         push!(nodes, Node(
             name=reaction.name,
             kind=:reaction,
@@ -91,6 +120,27 @@ function Network(path::String, description::Models.Description;parameters=Dict{S
         groups=network.groups,
         parameters=Dict(path => parameters)
     )
+end
+
+function Network(schedule!::Models.Scheduling.Schedule)
+    networks = Dict{String, Network}()
+    function collect_network!(primitive!, x, Δt; kwargs...)
+        isfinite(Δt) && Δt > 0 || return nothing
+        path = primitive!.path
+        haskey(networks, path) && return nothing
+        networks[path] = Network(
+            path,
+            Models.describe(primitive!);
+            parameters=Dict{Symbol, Float64}(Models.parameters(primitive!))
+        )
+        nothing
+    end
+    schedule!(
+        Models.FlatState();
+        dryrun=collect_network!,
+        parallel=false
+    )
+    merge_networks(values(networks)...)
 end
 
 function gene_of(species::Symbol, groups)
@@ -147,6 +197,21 @@ function merge_networks(networks::Network...)
     )
 end
 
+present_at(item, path) = isempty(item.present_in) || path in item.present_in
+
+function path_view(network::Network, path::String)
+    parameters = haskey(network.parameters, path) ?
+        Dict(path => network.parameters[path]) :
+        Dict{String, Dict{Symbol, Float64}}()
+
+    Network(
+        nodes=filter(node -> present_at(node, path), network.nodes),
+        links=filter(link -> present_at(link, path), network.links),
+        groups=network.groups,
+        parameters=parameters,
+    )
+end
+
 function species_view(network::Network; include_shared=false)
     nodes = [n for n in network.nodes if n.kind !== :gene && (include_shared || !get(n.properties, :shared, false))]
     visible = Set(node.name for node in nodes)
@@ -191,6 +256,7 @@ function gene_view(network::Network; include_shared=false)
     for reaction in network.nodes
         reaction.kind === :reaction || continue
         reaction.parent === nothing && continue
+        haskey(reaction.properties, :gene_link) && continue
         from = get(substrates, reaction.name, Dict{Symbol, Int}())
         to = get(products, reaction.name, Dict{Symbol, Int}())
         catalysts = Set(
@@ -200,7 +266,13 @@ function gene_view(network::Network; include_shared=false)
         for catalyst in catalysts
             from = representative(catalyst)
             from === reaction.parent && continue
-            push!(links, Link(; kind=:catalyses, from, to=reaction.parent, scope=:gene))
+            push!(links, Link(
+                kind=:affects,
+                from=from,
+                to=reaction.parent,
+                scope=:gene,
+                present_in=reaction.present_in,
+            ))
         end
     end
     links = merge_networks(Network(links=links)).links
@@ -219,7 +291,7 @@ function properties_label(properties)
     entries = [
         key => value
         for (key, value) in properties
-        if key !== :parameters
+        if key ∉ (:parameters, :gene_link)
     ]
 
     isempty(entries) && return ""
@@ -237,31 +309,14 @@ end
 
 node_label(node::Node) = node_label(Val(node.kind), node)
 node_label(::Val, node) = string(node.name)
-node_label(::Val{:reaction}, node) =
-    string(get(node.properties, :kind, node.name))
+node_label(::Val{:reaction}, node) = string(node.properties[:name])
 
 link_label(link::Link) = link_label(Val(link.kind), link)
 link_label(::Val, link) = properties_label(link.properties)
 link_label(::Val{:substrate}, link) = nothing
 link_label(::Val{:product}, link) = nothing
 
-function reaction_side(network, reaction, kind)
-    links = filter(network.links) do link
-        link.kind === kind &&
-            (kind === :substrate ? link.to : link.from) === reaction.name
-    end
 
-    isempty(links) && return "∅"
-
-    join((
-        begin
-            species = kind === :substrate ? link.from : link.to
-            stoichiometry = get(link.properties, :stoichiometry, 1)
-            stoichiometry == 1 ? string(species) : "$stoichiometry $species"
-        end
-        for link in links
-    ), " + ")
-end
 
 function parameter_lines(item, network)
     associations = get(item.properties, :parameters, Dict())
@@ -297,12 +352,30 @@ node_tooltip(::Val, node, network) = string(node.name)
 node_tooltip(::Val{:gene}, node, network) = "gene $(node.name)"
 
 function node_tooltip(::Val{:reaction}, node, network)
-    kind = get(node.properties, :kind, :reaction)
-    heading = node.parent === nothing ?
-        string(kind) :
-        "$kind on $(node.parent)"
+    function reaction_side(network, reaction, kind)
+        links = filter(network.links) do link
+            link.kind === kind &&
+                (kind === :substrate ? link.to : link.from) === reaction.name
+        end
 
-    arrow = iszero(get(node.properties, :k⁻, 0)) ? "→" : "⇌"
+        isempty(links) && return "∅"
+
+        join((
+            begin
+                species = kind === :substrate ? link.from : link.to
+                stoichiometry = get(link.properties, :stoichiometry, 1)
+                stoichiometry == 1 ? string(species) : "[$stoichiometry]$species"
+            end
+            for link in links
+        ), " + ")
+    end
+    label = node_label(node)
+    heading = node.parent === nothing ?
+        label :
+        "$label on $(node.parent)"
+
+    k⁻ = get(node.properties, :k⁻, 0)
+    arrow = isequal(k⁻, zero(k⁻)) ? "→" : "⇌"
 
     equation = join((
         reaction_side(network, node, :substrate),
@@ -325,4 +398,25 @@ function link_tooltip(::Val, link, network)
     heading = "$(link.kind): $from → $to"
     parameters = ("  $line" for line in parameter_lines(link, network))
     join((heading, parameters...), "\n")
+end
+
+function node_variants(node::Node, network::Network)
+    Dict(path => begin
+        view = path_view(network, path)
+        (;
+            label=node_label(node),
+            tooltip=node_tooltip(node, view),
+            parameters=parameter_lines(node, view),
+        )
+    end for path in keys(network.parameters) if present_at(node, path))
+end
+
+function link_variants(link::Link, network::Network)
+    Dict(path => begin
+        view = path_view(network, path)
+        (;
+            label=link_label(link),
+            tooltip=link_tooltip(link, view),
+        )
+    end for path in keys(network.parameters) if present_at(link, path))
 end

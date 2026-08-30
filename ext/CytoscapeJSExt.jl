@@ -11,6 +11,7 @@ const GENE_WIDTH = 144
 const GENE_HEIGHT = 80
 const GENE_PADDING = 6
 const SPECIES_SIZE = 8
+const ORPHAN_SPECIES_SIZE = 60
 const GENE_CHILD_WIDTH = GENE_WIDTH - SPECIES_SIZE - 2 * GENE_PADDING
 const GENE_CHILD_HEIGHT = GENE_HEIGHT - SPECIES_SIZE - 2 * GENE_PADDING
 
@@ -58,17 +59,21 @@ const DEFAULT_TOOLTIP_ATTRIBUTES = (;
     """
 )
 
-const DEFAULT_ATTRIBUTES = (;
-    style="""
+function graph_attributes(; height="100vh", min_height="0")
+    (;
+        style="""
         width: 100%;
-        height: calc(100vh);
-        min-height: 560px;
+        height: $height;
+        min-height: $min_height;
         overflow: hidden;
         background-color: #ffffff;
         background-image: radial-gradient(circle, #d4d4d8 1px, transparent 1px);
         background-size: 30px 30px;
-    """
-)
+        """
+    )
+end
+
+const DEFAULT_ATTRIBUTES = graph_attributes()
 
 function CytoscapeJS.Cytoscape(
     network::Vis.Network;
@@ -76,7 +81,9 @@ function CytoscapeJS.Cytoscape(
     group_colors=Vis.group_colors(network.groups),
     stylesheet=stylesheet(network, group_colors),
     tooltip_attributes = DEFAULT_TOOLTIP_ATTRIBUTES,
-    attributes = DEFAULT_ATTRIBUTES,
+    height="100vh",
+    min_height="0",
+    attributes=graph_attributes(; height, min_height),
     wheelSensitivity=0.1,
     kwargs...
 )
@@ -110,15 +117,22 @@ node_color(node, group_colors) = css_color(
     get(group_colors, something(node.parent, node.name), "#808080")
 )
 
+present_in(item) = sort!(collect(item.present_in))
+
 function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_colors)
-    (; data=(;
+    data = (;
         id=string(node.name),
         label=Vis.node_label(node),
         kind=string(node.kind),
         colour=node_color(node, group_colors),
         tooltip=Vis.node_tooltip(node, network),
         parameters=Vis.parameter_lines(node, network),
-    ), classes = string(node.kind))
+        presentIn=present_in(node),
+        variants=(; presentIn=Vis.node_variants(node, network)),
+        view="gene",
+    )
+    orphan = node.kind === :species && node.parent === nothing ? " orphan-species" : ""
+    (; data, classes="$(node.kind)$orphan")
 end
 
 function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, group_colors)
@@ -128,7 +142,10 @@ function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, gro
         kind=string(node.kind),
         colour=node_color(node, group_colors),
         tooltip=Vis.node_tooltip(node, network),
-        parameters=Vis.parameter_lines(node, network)
+        parameters=Vis.parameter_lines(node, network),
+        presentIn=present_in(node),
+        variants=(; presentIn=Vis.node_variants(node, network)),
+        view="species",
     )
     node.parent === nothing ||
         (data = merge(data, (; parent=string(node.parent))))
@@ -147,6 +164,8 @@ function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_r
         view=string(V),
         label=Vis.link_label(link),
         tooltip=Vis.link_tooltip(link, network),
+        presentIn=present_in(link),
+        variants=(; presentIn=Vis.link_variants(link, network)),
     )
     if haskey(link.properties, :at)
         at = Float64(get(link.properties, :at, 1))
@@ -164,7 +183,9 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "text-halign" => "center",
             "text-valign" => "center",
             "background-color" => "data(colour)",
-            "border-width" => 0
+            "border-width" => 0,
+            "transition-property" => "opacity",
+            "transition-duration" => "250ms",
         )),
         (; selector="node.gene", style=Dict(
             "shape" => "round-rectangle",
@@ -190,6 +211,14 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "text-valign" => "bottom",
             "text-margin-y" => 1
         )),
+        (; selector="node.orphan-species", style=Dict(
+            "shape" => "ellipse",
+            "width" => ORPHAN_SPECIES_SIZE,
+            "height" => ORPHAN_SPECIES_SIZE,
+            "font-size" => 16,
+            "text-valign" => "bottom",
+            "text-margin-y" => 1
+        )),
         (; selector="node.reaction", style=Dict(
             "shape" => "ellipse",
             "width" => 12,
@@ -198,11 +227,21 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "text-margin-y" => -2,
             "background-opacity" => 0.0,
         )),
+        (; selector="""node.reaction[view = "gene"]""", style=Dict(
+            "width" => 36,
+            "height" => 27,
+            "font-size" => 8,
+            "text-margin-y" => -6
+        )),
         (; selector="node.dimmed", style=Dict(
             "opacity" => 0.3,
         )),
         (; selector="node.highlighted", style=Dict(
             "z-index" => 10,
+        )),
+        (; selector="node.filtered", style=Dict(
+            "opacity" => 0,
+            "events" => "no",
         )),
         # edges
         (; selector="edge", style=Dict(
@@ -216,7 +255,9 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "text-margin-y" => -8,
             "text-background-color" => "#ffffff",
             "text-background-opacity" => 0.7,
-            "text-background-padding" => 2
+            "text-background-padding" => 2,
+            "transition-property" => "opacity",
+            "transition-duration" => "250ms",
         )),
         (; selector="edge[view =\"species\"]", style=Dict(
             "font-size" => 3,
@@ -230,7 +271,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "width" => 1.5,
             "target-arrow-shape" => "diamond"
         )),
-        (; selector="edge.catalyses", style=Dict(
+        (; selector="edge.affects", style=Dict(
             "width" => 1.2,
             "line-style" => "dashed",
             "line-dash-pattern" => [4,2],
@@ -254,6 +295,10 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         )),
         (; selector="edge.dimmed", style=Dict(
             "opacity" => 0.3,
+        )),
+        (; selector="edge.filtered", style=Dict(
+            "opacity" => 0,
+            "events" => "no",
         )),
         (; selector="edge.activation[strengthNorm], edge.repression[strengthNorm]", style=Dict(
             "width" => "mapData(strengthNorm, 0, 1, 1, 5)",
@@ -359,6 +404,15 @@ function selection_view()
         });
 
         cy.on("add remove", scheduleUpdate);
+        cy.on("filter", () => {
+            for (const id of [...selected]) {
+                const node = cy.getElementById(id);
+                if (node.empty() || node.hasClass("filtered")) {
+                    selected.delete(id);
+                }
+            }
+            scheduleUpdate();
+        });
         cy.on("destroy", () => {
             if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
             selected.clear();
@@ -579,7 +633,10 @@ function inline_parameters()
             pendingFrame = null;
 
             for (const { node, container } of anchors.values()) {
-                if (node.removed() || !node.visible()) {
+                const geneView = node.hasClass("gene-view");
+                const fontSize = geneView ? 6 : 1.8
+                const offset = geneView ? 6 : 2/3;
+                if (node.removed() || !node.visible() || node.hasClass("filtered")) {
                     container.style.display = "none";
                     continue;
                 }
@@ -590,10 +647,10 @@ function inline_parameters()
                 const position = node.renderedPosition();
 
                 container.style.fontSize =
-                    `${1.8 * cy.zoom()}px`;
+                    `${fontSize * cy.zoom()}px`;
 
                 container.style.transform =
-                    `translate3d(${position.x}px, ${position.y - (2 / 3) * cy.zoom()}px, 0) ` +
+                    `translate3d(${position.x}px, ${position.y - offset * cy.zoom()}px, 0) ` +
                     `translate(-50%, 20%)`;
             }
         }
@@ -614,8 +671,12 @@ function inline_parameters()
             removeAnchor(event.target);
         });
 
-        cy.on("pan zoom resize", scheduleUpdate);
+        cy.on("pan zoom resize filter", scheduleUpdate);
         cy.on("style", "node.reaction", scheduleUpdate);
+        cy.on("data", "node.reaction", event => {
+            removeAnchor(event.target);
+            addAnchor(event.target);
+        });
         cy.on("position", "node", scheduleUpdate);
 
         cy.on("destroy", () => {
