@@ -63,6 +63,11 @@ When parsing the alternative representation as a `Specification`, whenever a `Te
 Specifications.constructor(::Symbol)
 ```
 
+```@docs
+Specifications.locate
+Specifications.set
+```
+
 To see which objects can be defined in the language using the `{"{...}": ...}` syntax, you can simply call `methods(Specifications.constructor)`. To register new types of objects and in this way support them in the language, you may define new methods of the form `constructor(::Val{:...})`.
 
 ## Schedule semantics

@@ -58,8 +58,6 @@ Catalyst.ReactionSystem{Catalyst.NetworkProperties{Int64, SymbolicUtils.BasicSym
 julia> typeof(model.model.model.model)
 GeneRegulatorySystems.Models.SciML.JumpModel
 
-julia> typeof(model.model.model.model.system)
-ModelingToolkitBase.System
 ```
 
 Higher-order model blueprints such [Differentiation](@ref) are expressed in terms of a common first-iteration model of simplified gene regulation defined in the [`Models.V1`](@ref) module.
@@ -77,6 +75,7 @@ Models.V1.ProkaryoteBaseRates
 Models.V1.Activation
 Models.V1.Repression
 Models.V1.Proteolysis
+Models.V1.knockout
 Models.Reaction
 Models.Reagents
 ```

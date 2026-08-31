@@ -19,8 +19,7 @@ const DEFAULT_LAYOUT = (;
     name="fcose",
     quality="proof",
     randomize=true,
-    animate=true,
-    animationDuration=600,
+    animate=false,
     fit=true,
     padding=50,
     nodeDimensionsIncludeLabels=true,
@@ -69,6 +68,8 @@ function graph_attributes(; height="100vh", min_height="0")
         background-color: #ffffff;
         background-image: radial-gradient(circle, #d4d4d8 1px, transparent 1px);
         background-size: 30px 30px;
+        border: 1px solid #d4d4d8;
+        border-radius: 6px;
         """
     )
 end
@@ -93,9 +94,9 @@ function CytoscapeJS.Cytoscape(
 
     CytoscapeJS.Cytoscape(
         gene_elements;
-        layout,
+        layout=(; layout..., name="preset"),
         stylesheet,
-        setup=network_setup(gene_elements, species_elements),
+        setup=network_setup(gene_elements, species_elements, layout),
         wheelSensitivity,
         tooltip_attributes,
         attributes,
@@ -114,17 +115,20 @@ css_color(color::Color) = "#$(hex(color))"
 css_color(color::AbstractString) = color
 
 node_color(node, group_colors) = css_color(
-    get(group_colors, something(node.parent, node.name), "#808080")
+    get(group_colors, string(something(node.parent, node.name)), "#808080")
 )
 
 present_in(item) = sort!(collect(item.present_in))
 
 function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_colors)
+    colour = parse(Colorant, node_color(node, group_colors))
+    text_colour = Lab(colour).l < 50 ? "#ffffff" : "#1a1a1a"
     data = (;
         id=string(node.name),
         label=Vis.node_label(node),
         kind=string(node.kind),
-        colour=node_color(node, group_colors),
+        colour=css_color(colour),
+        textColour=text_colour,
         tooltip=Vis.node_tooltip(node, network),
         parameters=Vis.parameter_lines(node, network),
         presentIn=present_in(node),
@@ -155,11 +159,14 @@ end
 
 function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_reference) where V
     loop = link.from === link.to ? " loop" : ""
+    regulation = get(link.properties, :regulation, link.kind)
     data=(;
         id="$V:$(link.kind):$(link.from):$(link.to)",
         source=string(link.from),
         target=string(link.to),
         kind=string(link.kind),
+        regulation=string(regulation),
+        edgeColour=get(Vis.LINK_COLORS, regulation, "#c4c4cb"),
         scope=string(link.scope),
         view=string(V),
         label=Vis.link_label(link),
@@ -178,7 +185,6 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
     rules = [
         # nodes
         (; selector="node", style=Dict(
-            "label" => "data(label)",
             "font-family" => fontfamily,
             "text-halign" => "center",
             "text-valign" => "center",
@@ -187,6 +193,9 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "transition-property" => "opacity",
             "transition-duration" => "250ms",
         )),
+        (; selector="node[label]", style=Dict(
+            "label" => "data(label)",
+        )),
         (; selector="node.gene", style=Dict(
             "shape" => "round-rectangle",
             "width" => GENE_WIDTH,
@@ -194,14 +203,19 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "min-width" => GENE_WIDTH,
             "min-height" => GENE_HEIGHT,
             "font-size" => 20,
-            "padding" => GENE_PADDING
+            "padding" => GENE_PADDING,
+            "color" => "data(textColour)"
         )),
         (; selector="node.compound-parent", style=Dict(
             "text-valign" => "top",
             "text-margin-y" => -8,
             "background-opacity" => 0.2,
             "text-wrap" => "none",
-            "compound-sizing-wrt-labels" => "exclude"
+            "compound-sizing-wrt-labels" => "exclude",
+            "color" => "#18181b"
+        )),
+        (; selector="node.compound-parent.dark", style=Dict(
+            "color" => "#f4f4f5"
         )),
         (; selector="node.species", style=Dict(
             "shape" => "ellipse",
@@ -209,7 +223,11 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "height" => SPECIES_SIZE,
             "font-size" => 2.4,
             "text-valign" => "bottom",
-            "text-margin-y" => 1
+            "text-margin-y" => 1,
+            "color" => "#18181b"
+        )),
+        (; selector="node.species.dark", style=Dict(
+            "color" => "#f4f4f5"
         )),
         (; selector="node.orphan-species", style=Dict(
             "shape" => "ellipse",
@@ -226,6 +244,10 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "font-size" => 2.0,
             "text-margin-y" => -2,
             "background-opacity" => 0.0,
+            "color" => "#18181b",
+        )),
+        (; selector="node.reaction.dark", style=Dict(
+            "color" => "#f4f4f5",
         )),
         (; selector="""node.reaction[view = "gene"]""", style=Dict(
             "width" => 36,
@@ -245,19 +267,28 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         )),
         # edges
         (; selector="edge", style=Dict(
-            "label" => "data(label)",
             "width" => 1,
+            "line-color" => "data(edgeColour)",
+            "target-arrow-color" => "data(edgeColour)",
             "curve-style" => "bezier",
             "target-arrow-shape" => "triangle",
             "font-family" => fontfamily,
             "font-size" => 7,
             "text-rotation" => "autorotate",
             "text-margin-y" => -8,
+            "color" => "#18181b",
             "text-background-color" => "#ffffff",
             "text-background-opacity" => 0.7,
             "text-background-padding" => 2,
             "transition-property" => "opacity",
             "transition-duration" => "250ms",
+        )),
+        (; selector="edge.dark", style=Dict(
+            "color" => "#f4f4f5",
+            "text-background-color" => "#27272a",
+        )),
+        (; selector="edge[label]", style=Dict(
+            "label" => "data(label)",
         )),
         (; selector="edge[view =\"species\"]", style=Dict(
             "font-size" => 3,
@@ -288,6 +319,21 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "text-margin-y" => -1,
             "text-background-opacity" => 0
         )),
+        (; selector="""
+            edge.substrate[view = "gene"], edge.product[view = "gene"]
+            """, style=Dict(
+            "width" => 1,
+            "arrow-scale" => 0.35,
+        )),
+        (; selector="edge.promotes, edge.inhibits", style=Dict(
+            "width" => "mapData(strengthNorm, 0, 1, 0.75, 2.5)",
+            "opacity" => 0.35,
+            "font-size" => 1.5,
+            "arrow-scale" => 0.4,
+            "text-margin-y" => -1,
+            "text-background-opacity" => 0.7,
+            "text-background-padding" => 0.0,
+        )),
         (; selector="edge.loop", style=Dict(
             "curve-style" => "unbundled-bezier",
             "control-point-step-size" => 100,
@@ -304,33 +350,10 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "width" => "mapData(strengthNorm, 0, 1, 1, 5)",
         )),
 
-        (; selector="""
-            edge[view = "species"][strengthNorm]
-            """,
-        style=Dict(
-            "width" => "mapData(strengthNorm, 0, 1, 0.75, 2.5)",
-        )),
-        (; selector="edge.promotes, edge.inhibits", style=Dict(
-            "width" => 0.5,
-            "font-size" => 1.5,
-            "arrow-scale" => 0.2,
-            "text-margin-y" => -1,
-            "text-background-opacity" => 0.7,
-            "text-background-padding" => 0.0,
-        )),
         (; selector="edge.inhibits", style=Dict(
             "target-arrow-shape" => "tee",
         )),
     ]
-    for (kind, color) in Vis.LINK_COLORS
-        push!(rules, (;
-            selector="edge.$kind",
-            style=Dict(
-                "line-color" => color,
-                "target-arrow-color" => color
-            )
-        ))
-    end
     rules
 end
 
@@ -425,6 +448,12 @@ function adaptive_view(gene_elements, species_elements)
 JS.js"""
 cy => {
     const threshold = 2.0;
+    const layoutState = globalThis.__grsNetworkLayout ??= {
+        positions: new Map(),
+        detailPositions: new Map(),
+        viewport: null,
+        detailVisible: false,
+    };
     const geneElements = $(gene_elements);
     const speciesElements = $(species_elements);
     const geneEdges = geneElements.filter(
@@ -432,8 +461,50 @@ cy => {
     );
 
     let detailVisible = false;
+    let manualOverride = layoutState.detailVisible;
     let timeout = null;
-    const positions = new Map();
+    const positions = layoutState.detailPositions;
+
+    const host = cy.container();
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+
+    if (getComputedStyle(host).position === "static") {
+        host.style.position = "relative";
+    }
+
+    Object.assign(toggle.style, {
+        position: "absolute",
+        right: "12px",
+        bottom: "12px",
+        zIndex: "100",
+        width: "24px",
+        height: "24px",
+        display: "grid",
+        placeItems: "center",
+        padding: "0",
+        border: "none",
+        background: "transparent",
+        color: "inherit",
+        cursor: "pointer",
+    });
+
+    function updateToggle() {
+        const label = detailVisible ? "gene view" : "species view";
+        const detail = detailVisible
+            ? '<path fill-rule="evenodd" d="M3 6.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5"/>'
+            : '<path fill-rule="evenodd" d="M6.5 3a.5.5 0 0 1 .5.5V6h2.5a.5.5 0 0 1 0 1H7v2.5a.5.5 0 0 1-1 0V7H3.5a.5.5 0 0 1 0-1H6V3.5a.5.5 0 0 1 .5-.5"/>';
+        toggle.title = label;
+        toggle.setAttribute("aria-label", label);
+        toggle.innerHTML = `
+            <svg viewBox="0 0 16 16" width="13" height="13"
+                 aria-hidden="true" fill="currentColor">
+                <path fill-rule="evenodd"
+                      d="M6.5 12a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11M13 6.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0"/>
+                <path d="M10.344 11.742q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1 6.5 6.5 0 0 1-1.398 1.4z"/>
+                ${detail}
+            </svg>`;
+    }
 
     function recenterGene(gene, target) {
         const current = gene.position();
@@ -501,8 +572,8 @@ cy => {
                 numIter: 100,
                 gravity: 1.2,
                 gravityRange: 1.0,
-                tile: false,
-                packComponents: false,
+                tile: true,
+                packComponents: true,
             });
 
             layout.one("layoutstop", () => {
@@ -518,6 +589,8 @@ cy => {
     function showDetail() {
         if (detailVisible) return;
         detailVisible = true;
+        layoutState.detailVisible = true;
+        updateToggle();
         const genePositions = new Map(
             cy.nodes(".gene").map(gene => [
                 gene.id(),
@@ -540,6 +613,8 @@ cy => {
     function hideDetail() {
         if (!detailVisible) return;
         detailVisible = false;
+        layoutState.detailVisible = false;
+        updateToggle();
         cy.nodes(":child").forEach(node => {
             positions.set(node.id(), node.position());
         })
@@ -551,12 +626,35 @@ cy => {
         })
     }
     function update() {
-        cy.zoom() > threshold ? showDetail() : hideDetail()
+        const shouldShow = cy.zoom() > threshold;
+        if (manualOverride) {
+            if (shouldShow === detailVisible) manualOverride = false;
+            return;
+        }
+        shouldShow ? showDetail() : hideDetail();
     }
+
+    toggle.addEventListener("click", event => {
+        event.stopPropagation();
+        manualOverride = true;
+        detailVisible ? hideDetail() : showDetail();
+    });
+    host.appendChild(toggle);
+    updateToggle();
+
+    if (layoutState.detailVisible) showDetail();
+
     cy.on("zoom", () => {
         clearTimeout(timeout);
         timeout = setTimeout(update, 50)
-    })
+    });
+    cy.on("destroy", () => {
+        clearTimeout(timeout);
+        cy.nodes(":child").forEach(node => {
+            positions.set(node.id(), { ...node.position() });
+        });
+        toggle.remove();
+    });
     setTimeout(update, 500);
 }
 """
@@ -633,7 +731,7 @@ function inline_parameters()
             pendingFrame = null;
 
             for (const { node, container } of anchors.values()) {
-                const geneView = node.hasClass("gene-view");
+                const geneView = node.data("view") === "gene";
                 const fontSize = geneView ? 6 : 1.8
                 const offset = geneView ? 6 : 2/3;
                 if (node.removed() || !node.visible() || node.hasClass("filtered")) {
@@ -696,17 +794,119 @@ function inline_parameters()
     """
 end
 
-function network_setup(gene_elements, species_elements)
+function persistent_layout(layout)
+    JS.js"""
+    async cy => {
+        const layoutState = globalThis.__grsNetworkLayout ??= {
+            positions: new Map(),
+            detailPositions: new Map(),
+            viewport: null,
+            detailVisible: false,
+        };
+        const positions = layoutState.positions;
+        const nodes = cy.nodes();
+        let restored = 0;
+
+        nodes.forEach(node => {
+            const position = positions.get(node.id());
+            if (position) {
+                node.position(position);
+                restored++;
+            }
+        });
+        const rememberPositions = () => {
+            cy.nodes().forEach(node => {
+                positions.set(node.id(), { ...node.position() });
+            });
+        };
+        if (restored === nodes.length) {
+            if (layoutState.viewport) {
+                cy.zoom(layoutState.viewport.zoom);
+                cy.pan({ ...layoutState.viewport.pan });
+            } else {
+                cy.fit(undefined, 50);
+            }
+        } else {
+            await new Promise(resolve => {
+                const run = cy.layout({
+                    ...$(layout),
+                    randomize: restored === 0
+                });
+                run.one("layoutstop", () => {
+                    rememberPositions();
+                    resolve();
+                });
+                run.run();
+            });
+        }
+        cy.on("dragfree", "node", event => {
+            positions.set(
+                event.target.id(),
+                { ...event.target.position() }
+            );
+        });
+        layoutState.viewport = {
+            zoom: cy.zoom(),
+            pan: { ...cy.pan() },
+        };
+        cy.on("viewport", () => {
+            layoutState.viewport = {
+                zoom: cy.zoom(),
+                pan: { ...cy.pan() },
+            };
+        });
+    }
+    """
+end
+
+function automatic_theme()
+    JS.js"""
+    cy => {
+        const host = cy.container();
+        const colorScheme = window.matchMedia("(prefers-color-scheme: dark)")
+        const applyElementTheme = event => {
+            event.target.toggleClass("dark", colorScheme.matches);
+        };
+        function applyTheme() {
+            const dark = colorScheme.matches;
+            host.style.color = dark ? "#f4f4f5" : "#1f2937";
+            host.style.backgroundColor = dark ? "#1f1f1f" : "#ffffff";
+            host.style.backgroundImage = `radial-gradient(
+                circle,
+                ${dark ? "#3f3f46" : "#d4d4d8"} 1px,
+                transparent 1px
+            )`
+            host.style.borderColor = dark ? "#6b7280" : "#d4d4d8";
+            cy.elements().toggleClass("dark", dark);
+        }
+        applyTheme()
+        cy.on("add", applyElementTheme)
+        colorScheme.addEventListener("change", applyTheme)
+        cy.on("destroy", () => {
+            cy.off("add", applyElementTheme)
+            colorScheme.removeEventListener("change", applyTheme)
+        })
+    }
+    """
+end
+
+function network_setup(gene_elements, species_elements, layout)
     adaptive = adaptive_view(gene_elements, species_elements)
     selection = selection_view()
     parameters = inline_parameters()
+    setup_layout = persistent_layout(layout)
+    theme = automatic_theme()
 
     JS.js"""
-    cy => {
+    async cy => {
         const setupAdaptive = $(adaptive);
         const setupSelection = $(selection);
         const setupParameters = $(parameters);
+        const setupLayout = $(setup_layout);
+        const setupTheme = $(theme);
 
+        await setupLayout(cy);
+        setupTheme(cy);
         setupAdaptive(cy);
         setupSelection(cy);
         setupParameters(cy);

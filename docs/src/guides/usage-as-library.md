@@ -188,7 +188,7 @@ The inner model
 ```@example usage
 typeof(f!.model.model)
 ```
-is the actual [`JumpModel`](@ref Models.SciML.JumpModel) containing the prepared `system` (a `ModelingToolkit.JumpSystem`), `method` (a `JumpProcesses.AbstractAggregatorAlgorithm`) and `parameters`.
+is the actual [`JumpModel`](@ref Models.SciML.JumpModel) which wraps a prepared `problem` (a compiled `ModelingToolkit.JumpProblem`).
 
 See [Instantiating models](@ref) and [Regulation](@ref) for information on how to construct other regulation models.
 
@@ -216,7 +216,11 @@ To simulate a trajectory, you need to first construct an initial state and then 
 # Initial state for V1 regulation requires some molecular species present;
 # defaults are:
 #     Dict(:polymerases => 5*10^5, :ribosomes => 2*10^6, :proteasomes => 10^6)
-x = Models.FlatState(counts = Models.load_defaults()[:bootstrap])
+bootstrap = Dict{Symbol, Int}(
+    name => Int(value)
+    for (name, value) in Models.load_defaults()[:bootstrap]
+)
+x = Models.FlatState(counts = bootstrap)
 
 # f! contains a JumpModel, which requires a JumpState; convert it:
 x = Models.adapt!(x, f!)
@@ -262,18 +266,21 @@ using JumpProcesses
 using ModelingToolkit
 using Plots
 
-(; system, method, parameters) = f!.model.model
+jump_model = f!.model.model
+system = GeneRegulatorySystems.Models.SciML.system(jump_model)
+aggregator = GeneRegulatorySystems.Models.SciML.method(jump_model)
+parameters = [
+    p => jump_model[p]
+    for p in GeneRegulatorySystems.Models.SciML.parameter_symbols(jump_model)
+]
 
-bootstrap = Models.load_defaults()[:bootstrap]
 normalize_name = GeneRegulatorySystems.Models.SciML.normalize_name
 u₀ = [
     s => Int(get(bootstrap, normalize_name(s), 0))
     for s in unknowns(system)
 ]
-aggregator = method
 rng = Xoshiro()
 problem = JumpProblem(system, vcat(u₀, parameters), (0.0, 3e4); aggregator, rng)
-
 solution = solve(problem, SSAStepper())
 
 plot(solution, idxs = (:a₊proteins, :b₊proteins))
@@ -345,7 +352,13 @@ repressilator!.definition
 
 And just [like above](@ref "Simulating models"), we can now use the contained `JumpModel`, for example to manually run simulations:
 ```@example usage
-(; system, method, parameters) = repressilator!.model.model.model
+jump_model = repressilator!.model.model.model
+system = GeneRegulatorySystems.Models.SciML.system(jump_model)
+aggregator = GeneRegulatorySystems.Models.SciML.method(jump_model)
+parameters = [
+    p => jump_model[p]
+    for p in GeneRegulatorySystems.Models.SciML.parameter_symbols(jump_model)
+]
 
 start = merge(bootstrap, Dict(Symbol("1.proteins") => 100))
 u₀ = [
@@ -353,12 +366,9 @@ u₀ = [
     for s in unknowns(system)
 ]
 
-aggregator = method
 rng = Xoshiro("seed")
-problem = JumpProblem(system, vcat(u₀, parameters), (0.0, 1e5); aggregator, rng)
-
+problem = ModelingToolkit.JumpProblem(system, vcat(u₀, parameters), (0.0, 1e5); aggregator, rng)
 solution = solve(problem, SSAStepper())
-
 Plots.plot(
     solution,
     idxs = (Symbol("1₊proteins"), Symbol("2₊proteins"), Symbol("3₊proteins")),

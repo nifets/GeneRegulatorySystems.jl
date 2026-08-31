@@ -52,7 +52,7 @@ julia> Models.t(x)
 julia> Models.each_event(x) do t, key, value
            println((; t, key, value))
        end
-(t = 100.0, key = :a, value = 10)
+(t = 100.0, key = :a, value = 10.0)
 ```
 
 ## Instantiating models
@@ -112,4 +112,6 @@ But since `Schedule` also supports trajectory branching, `adapt!` can be instruc
 Models.Model
 Models.Instant
 Models.Wrapped
+Models.parameters
+Models.remake
 ```

@@ -57,7 +57,13 @@ function Network(network::Models.RegulatoryNetwork)
         [Node(name=species,kind=:species, properties=Dict{Symbol,Any}(:shared=>true)) for species in network.shared_species]
     )
     gene_links = [Link(kind=link.kind, from=link.from, to=link.to, scope=:gene, properties=link.properties) for link in network.links]
-    modulation_links = [Link(kind=link.modulation.kind, from=link.modulation.from, to=link.modulation.to, scope=:species, properties=link.properties) for link in network.links if hasproperty(link, :modulation)]
+    modulation_links = [Link(
+        kind=link.modulation.kind,
+        from=link.modulation.from,
+        to=link.modulation.to,
+        scope=:species,
+        properties=merge(link.properties, Dict(:regulation => link.kind)),
+    ) for link in network.links if hasproperty(link, :modulation)]
     Network(
         nodes=nodes,
         links=vcat(gene_links, modulation_links),
@@ -291,7 +297,7 @@ function properties_label(properties)
     entries = [
         key => value
         for (key, value) in properties
-        if key ∉ (:parameters, :gene_link)
+        if key ∉ (:parameters, :gene_link, :regulation)
     ]
 
     isempty(entries) && return ""
@@ -414,8 +420,9 @@ end
 function link_variants(link::Link, network::Network)
     Dict(path => begin
         view = path_view(network, path)
+        parameters = parameter_lines(link, view)
         (;
-            label=link_label(link),
+            label=isempty(parameters) ? link_label(link) : join(parameters, " "),
             tooltip=link_tooltip(link, view),
         )
     end for path in keys(network.parameters) if present_at(link, path))

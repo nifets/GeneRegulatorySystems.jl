@@ -14,6 +14,7 @@ end
 
 makedocs(
     sitename = "GeneRegulatorySystems.jl",
+    checkdocs = :exports,
     pages = [
         "User guide" => [
             "Overview" => "index.md"
