@@ -289,7 +289,7 @@ end
 
 
 format_property(value, ::Val) = string(value)
-format_property(value::Real, ::Val) = @sprintf("%.2g", value)
+format_property(value::Real, ::Val) = string(round(value; sigdigits=2))
 format_property(value::Integer, ::Val{:stoichiometry}) = string(value)
 format_property(value, key::Symbol) = format_property(value, Val(key))
 

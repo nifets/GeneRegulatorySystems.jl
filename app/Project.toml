@@ -7,9 +7,9 @@ HypertextLiteral = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Pluto = "c3e4b0f8-55cb-11ea-2926-15256bba5781"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 [sources]
-CytoscapeJS = {rev = "main", url = "https://github.com/nifets/CytoscapeJS.jl"}
 GeneRegulatorySystems = {path = ".."}
 
 [compat]

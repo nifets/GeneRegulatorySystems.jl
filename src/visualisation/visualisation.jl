@@ -1,6 +1,5 @@
 module Visualisation
 
-using Printf
 using ..Models
 import Colors: Colors, Color, @colorant_str
 

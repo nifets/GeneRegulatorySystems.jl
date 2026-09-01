@@ -86,6 +86,7 @@ function CytoscapeJS.Cytoscape(
     min_height="0",
     attributes=graph_attributes(; height, min_height),
     wheelSensitivity=0.1,
+    selectionType="additive",
     kwargs...
 )
     strength_reference = get_strength_reference(network)
@@ -98,6 +99,7 @@ function CytoscapeJS.Cytoscape(
         stylesheet,
         setup=network_setup(gene_elements, species_elements, layout),
         wheelSensitivity,
+        selectionType,
         tooltip_attributes,
         attributes,
         kwargs...
@@ -360,7 +362,6 @@ end
 function selection_view()
     JS.js"""
     cy => {
-        const selected = new Set();
         let pendingFrame = null;
 
         function selectionKey(node) {
@@ -373,6 +374,11 @@ function selection_view()
 
         function updateSelection() {
             pendingFrame = null;
+            const selected = new Set(
+                cy.nodes(":selected")
+                    .filter(".gene, .orphan-species")
+                    .map(node => node.id())
+            );
 
             cy.batch(() => {
                 if (selected.size === 0) {
@@ -409,36 +415,25 @@ function selection_view()
             pendingFrame = requestAnimationFrame(updateSelection);
         }
 
-        cy.on("tap", "node.gene, node.orphan-species", event => {
-            const id = event.target.id();
-            const original = event.originalEvent;
-            const toggle = original?.ctrlKey === true || original?.metaKey === true;
+        function configureSelection(node) {
+            node.hasClass("gene") || node.hasClass("orphan-species")
+                ? node.selectify()
+                : node.unselectify();
+        }
 
-            if (toggle) {
-                selected.has(id) ? selected.delete(id) : selected.add(id);
-            } else if (selected.size === 1 && selected.has(id)) {
-                selected.clear();
-            } else {
-                selected.clear();
-                selected.add(id);
-            }
-
-            updateSelection();
+        cy.nodes().forEach(configureSelection);
+        cy.on("add", "node", event => {
+            configureSelection(event.target);
+            scheduleUpdate();
         });
-
-        cy.on("add remove", scheduleUpdate);
+        cy.on("remove", "node", scheduleUpdate);
+        cy.on("select unselect", "node.gene, node.orphan-species", scheduleUpdate);
         cy.on("filter", () => {
-            for (const id of [...selected]) {
-                const node = cy.getElementById(id);
-                if (node.empty() || node.hasClass("filtered")) {
-                    selected.delete(id);
-                }
-            }
+            cy.nodes(":selected.filtered").unselect();
             scheduleUpdate();
         });
         cy.on("destroy", () => {
             if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
-            selected.clear();
         });
     }
     """

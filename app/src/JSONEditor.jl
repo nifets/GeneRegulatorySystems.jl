@@ -17,6 +17,14 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
     <div class="editor"></div>
 
     <style>
+        .json-editor,
+        .json-editor .editor,
+        .json-editor .cm-editor {
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+
         .json-editor .cm-editor {
             height: var(--editor-height);
             border: 1px solid #d4d4d8;
