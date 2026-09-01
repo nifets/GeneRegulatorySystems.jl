@@ -3,8 +3,8 @@ module InspectTool
 include("$(@__DIR__)/../../common.jl")
 include("$(@__DIR__)/visualization.jl")
 
-using .Common: Dimension, artifact, warn_incompatible_versions
-using .Visualization: Catenation
+using .Common: artifact, warn_incompatible_versions
+using GeneRegulatorySystems.Visualisation: Catenation, Dimension, augment!, branch, cut, place!
 
 import Arrow
 using Chain
@@ -41,9 +41,6 @@ end
     label_pattern::String = ""
 end
 
-const BRANCH_PATTERN = r"^(?:.*/\d+)?"
-
-branch(path) = match(BRANCH_PATTERN, path).match
 
 function arrange(index)
     result = Int[]
@@ -100,72 +97,6 @@ function filter(index; selection)
     subset(index, :count => ByRow(>(0)), criteria...)
 end
 
-function cut(filtered)
-    result = Catenation[]
-
-    front = 0
-    back = 0
-    branch = nothing
-    for segment in eachrow(filtered)
-        segment.count > 0 || continue  # Ignore segments without recorded data.
-
-        # Terminate and emit an ongoing run when encountering a non-instant
-        # segment or on switching branches:
-        if front > 0 && (segment.branch != branch || segment.from < segment.to)
-            push!(result, Catenation(; front, back))
-            front = back = 0
-        end
-        branch = segment.branch
-
-        current = rownumber(segment)
-        if segment.from < segment.to
-            # Emit a single-segment run:
-            push!(result, Catenation(front = current, back = current))
-        else
-            # Initiate or extend an ongoing run with the current segment:
-            back = current
-            if front == 0
-                front = current
-            end
-        end
-    end
-
-    # Emit the potentially ongoing run:
-    front > 0 && push!(result, Catenation(; front, back))
-
-    result
-end
-
-function place!(catenation::Catenation, event)
-    dimension = Dimension(event.name)
-    series = get!(catenation.series, dimension) do
-        Visualization.seriestype(dimension)()
-    end
-
-    push!(series.ts, event.t)
-    push!(series.ys, event.value)
-
-    nothing
-end
-
-augment!(catenation::Catenation) =
-    for (dimension, active) in catenation.series
-        dimension.kind == :active || continue
-        inactive_dimension = Dimension(:inactive, dimension.group)
-        catenation.series[Dimension(:activity, dimension.group)] =
-            if haskey(catenation.series, inactive_dimension)
-                Visualization.FractionSeries(
-                    active,
-                    catenation.series[inactive_dimension],
-                )
-            else
-                Visualization.FractionSeries(
-                    ys = Float64.(active.ys);
-                    active.ts,
-                )
-            end
-    end
-
 function load_events(filtered; location)
     # Since Makie does not handle large numbers of plot objects well, we
     # optimize the common case where the simulation state was sampled only at
@@ -175,12 +106,12 @@ function load_events(filtered; location)
 
     # We first bracket the segments into these potentially composite ranges,
     # each with an initially empty collection of time series attached.
-    catenations = cut(filtered)
+    catenations = cut(eachrow(filtered))
     length(catenations) ≤ LIMITS.catenations || return nothing
     catenations_index = Dict(
         filtered[k, :i] => j
-        for j in LinearIndices(catenations)
-        for k in (catenations[j].front : catenations[j].back)
+        for j in eachindex(catenations)
+        for k in catenations[j].segments
         if filtered[k, :count] > 0
     )
 
@@ -210,14 +141,14 @@ function load_events(filtered; location)
         by_kind = Dict{Symbol, Catenation}()
         for (dimension, series) in catenation.series
             catenation′ = get!(by_kind, dimension.kind) do
-                Catenation(; catenation.front, catenation.back)
+                Catenation(; segments=catenation.segments)
             end
             catenation′.series[dimension] = series
         end
 
         for (kind, catenation′) in by_kind
             catenations′ = get!(Dict{Int, Catenation}, result, kind)
-            catenations′[catenation′.back] = catenation′
+            catenations′[last(catenation′.segments)] = catenation′
         end
     end
 

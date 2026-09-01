@@ -58,5 +58,6 @@ const LINK_COLORS = Dict(
 )
 
 include("networks.jl")
+include("trajectories.jl")
 
 end

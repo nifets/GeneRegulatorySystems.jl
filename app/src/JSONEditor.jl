@@ -29,6 +29,7 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
             height: var(--editor-height);
             border: 1px solid #d4d4d8;
             border-radius: 6px;
+            overflow: hidden;
             font-size: 12px;
         }
 
@@ -36,9 +37,26 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
             overflow: auto;
         }
 
+        .json-editor .cm-gutters {
+            background-color: #ffffff !important;
+        }
+
+        .json-editor .cm-lineNumbers .cm-gutterElement {
+            color: #71717a !important;
+            opacity: 1 !important;
+        }
+
         @media (prefers-color-scheme: dark) {
             .json-editor .cm-editor {
                 border-color: #6b7280;
+            }
+
+            .json-editor .cm-gutters {
+                background-color: #282c34 !important;
+            }
+
+            .json-editor .cm-lineNumbers .cm-gutterElement {
+                color: #a1a1aa !important;
             }
 
             .json-editor .cm-activeLine,
@@ -64,6 +82,10 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
 
         const { basicSetup, EditorView } =
             await import("https://esm.sh/codemirror@6.0.2")
+        const { indentWithTab } =
+            await import("https://esm.sh/@codemirror/commands@^6.0.0?target=es2022")
+        const { keymap } =
+            await import("https://esm.sh/@codemirror/view@^6.0.0?target=es2022")
         const { json } =
             await import("https://esm.sh/@codemirror/lang-json@6.0.2")
         const { oneDark } =
@@ -80,6 +102,7 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
             parent,
             extensions: [
                 basicSetup,
+                keymap.of([indentWithTab]),
                 json(),
                 colorScheme.matches ? oneDark : [],
                 EditorView.updateListener.of(update => {

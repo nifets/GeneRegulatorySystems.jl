@@ -1,12 +1,12 @@
 module Visualization
 
-using ..Common: Dimension
-
 using DataFrames
 using Makie
 using GeneRegulatorySystems: Models, Scheduling, Visualisation
 import Graphs
 import GraphMakie
+
+using GeneRegulatorySystems.Visualisation: Catenation, CountSeries, Dimension, FractionSeries, seriestype
 
 const GroupColors = Visualisation.GroupColors
 
@@ -15,56 +15,6 @@ kindname(::Val{Kind}) where {Kind} = String(Kind)
 kindname(::Val{:activity}) = "promoter"
 kindname(::Val{:mrnas}) = "mRNAs"
 kindname(::Val{:premrnas}) = "pre-mRNAs"
-
-abstract type Series end
-
-@kwdef struct CountSeries <: Series
-    ts::Vector{Float64} = Float64[]
-    ys::Vector{Int} = Int[]
-end
-
-@kwdef struct FractionSeries <: Series
-    ts::Vector{Float64} = Float64[]
-    ys::Vector{Float64} = Float64[]
-end
-
-function FractionSeries(these::CountSeries, others::CountSeries)
-    ts = Float64[]
-    ys = Float64[]
-    xs1 = zip(these.ts, these.ys)
-    xs2 = zip(others.ts, others.ys)
-    t1 = t2 = 0.0
-    x1 = x2 = x1′ = x2′ = 0
-    next1 = next2 = (1, 1)
-    sentinel = ((Inf, 0), (0, 0))
-    while true
-        t1′ = t1
-        if t1 ≤ t2
-            ((t1, x1′), next1) = something(iterate(xs1, next1), sentinel)
-        end
-        if t2 ≤ t1′
-            ((t2, x2′), next2) = something(iterate(xs2, next2), sentinel)
-        end
-        isfinite(t1) || isfinite(t2) || break
-        t1 ≤ t2 && (x1 = x1′)
-        t2 ≤ t1 && (x2 = x2′)
-        push!(ts, min(t1, t2))
-        push!(ys, iszero(x1) ? 0.0 : x1 / (x1 + x2))
-    end
-
-    FractionSeries(; ts, ys)
-end
-
-seriestype(dimension::Dimension) = seriestype(dimension.kind)
-seriestype(kind::Symbol) = seriestype(Val(kind))
-seriestype(::Val) = CountSeries
-seriestype(::Val{:activity}) = FractionSeries
-
-@kwdef struct Catenation
-    front::Int
-    back::Int
-    series::Dict{Dimension, Series} = Dict{Dimension, Series}()
-end
 
 function attach_trajectory_label!(figure; kind, yscale)
     label = Label(
@@ -103,13 +53,13 @@ function attach_trajectory_components!(
     top = 0.0
     right = 1.0
     for catenation in values(catenations)
-        to = index[catenation.back, :to]
+        to = index[last(catenation.segments), :to]
         right = max(right, to)
         for (dimension, series) in catenation.series
             top = max(top, maximum(series.ys))
             color = group_colors[dimension.group]
 
-            previous_i = index[catenation.front, :previous]
+            previous_i = index[first(catenation.segments), :previous]
             if previous_i > 0 && haskey(catenations, previous_i)
                 previous_t = index[previous_i, :to]
                 previous_series = catenations[previous_i].series
@@ -128,7 +78,7 @@ function attach_trajectory_components!(
                 end
             end
 
-            if catenation.front == catenation.back
+            if length(catenation.segments) == 1
                 stairs!(
                     axis,
                     series.ts,
@@ -187,8 +137,8 @@ function attach_trajectory_components!(
 
     right = 1.0
     for catenation in values(catenations)
-        catenation.front == catenation.back || continue
-        segment = index[catenation.back, :]
+        (length(catenation.segments) == 1) || continue
+        segment = index[last(catenation.segments), :]
         segment.from < segment.to || continue
         right = max(right, segment.to)
         s = 1 / length(catenation.series)
@@ -489,7 +439,7 @@ function attach_network!(
     edge_colors = [edge_property(edge).color for edge in edges]
     edge_linestyles = [edge_property(edge).linestyle for edge in edges]
     edge_widths = [edge_property(edge).linewidth for edge in edges]
-    edge_labels = [edge_property(edge).label for edge in edges]
+    edge_labels = [something(edge_property(edge).label, "") for edge in edges]
     edge_markers = [edge_property(edge).marker for edge in edges]
     edge_markersizes = [
         marker === :rect ? Vec2f(0.08, 0.2) : Vec2f(0.2, 0.2)

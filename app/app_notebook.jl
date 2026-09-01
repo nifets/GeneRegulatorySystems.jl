@@ -562,6 +562,17 @@ begin
             transform: rotate(-360deg);
         }
     }
+
+    .logo-wrapper:hover img {
+        animation: grs-logo-hover-spin 0.6s ease-in-out;
+    }
+    
+    @keyframes grs-logo-hover-spin {
+        to {
+            transform: rotate(-360deg);
+        }
+    }
+                      
     pluto-editor:has(pluto-cell.running, pluto-cell.queued)
         .grs-header img {
         animation: grs-logo-spin 0.3s linear infinite;
