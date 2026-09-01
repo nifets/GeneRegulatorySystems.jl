@@ -4,7 +4,7 @@ include("$(@__DIR__)/../../common.jl")
 include("$(@__DIR__)/visualization.jl")
 
 using .Common: artifact, warn_incompatible_versions
-using GeneRegulatorySystems.Visualisation: Catenation, Dimension, augment!, branch, cut, place!
+using GeneRegulatorySystems.Visualisation: Catenation, Dimension, branch, cut, place!
 
 import Arrow
 using Chain
@@ -136,7 +136,6 @@ function load_events(filtered; location)
     # look them up from backlinks to connect them.
     result = Dict{Symbol, Dict{Int, Catenation}}()
     for catenation in catenations
-        augment!(catenation)
 
         by_kind = Dict{Symbol, Catenation}()
         for (dimension, series) in catenation.series

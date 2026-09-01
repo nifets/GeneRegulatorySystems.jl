@@ -1,7 +1,7 @@
 module Trajectories
 
 using GeneRegulatorySystems: Models
-using GeneRegulatorySystems.Visualisation: Catenation, augment!, cut, place!
+using GeneRegulatorySystems.Visualisation: Catenation, cut, place!
 
 @kwdef mutable struct Sink
     lock::ReentrantLock = ReentrantLock()
@@ -75,7 +75,6 @@ function prepare(sink::Sink)
     end
     by_kind = Dict{Symbol, Dict{Int, Catenation}}()
     for catenation in catenations
-        augment!(catenation)
         split = Dict{Symbol, Catenation}()
         for (dimension, series) in catenation.series
             selected = get!(split, dimension.kind) do

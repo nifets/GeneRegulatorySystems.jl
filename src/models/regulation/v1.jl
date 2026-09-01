@@ -585,6 +585,11 @@ function species_variable(name::Symbol; t)
     only(@species $name(t))
 end
 
+function observed_variable(name::Symbol; t)
+    name = Symbol(replace(String(name), r"\.(?=[^.]*$)" => '₊'))
+    only(@variables $name(t))
+end
+
 species_reference(name::Symbol; t, genes) =
     haskey(genes, name) ? genes[name].proteins : species_variable(name; t)
 
@@ -750,6 +755,25 @@ function regulation(
         kon / (kon + koff)
     end
 
+    function promoter_activity(target)
+        if definition.promoter_model === :equilibrium
+            p_active(target)
+        elseif target.unique
+            genes[target.name].active
+        else
+            active_counts = genes[target.name].active
+            inactive_counts = genes[target.name].inactive
+            total = active_counts + inactive_counts
+            ifelse(total > 0, active_counts / total, 0.0)
+        end
+    end
+
+    observed = [
+        observed_variable(Symbol("$(target.name).activity"); t) ~
+            promoter_activity(target)
+        for target in definition.genes
+    ]
+
     activation_rate(target::Gene) = k_on(target) * inactive(target)
     deactivation_rate(target::Gene) = k_off(target) * genes[target.name].active
 
@@ -757,7 +781,7 @@ function regulation(
 
 
     # Regulation for the whole network:
-    [
+    reactions = [
         # For each gene...
         mapreduce(vcat, definition.genes, init = Reaction[]) do target::Gene
             vcat(
@@ -860,6 +884,7 @@ function regulation(
             if k⁻ > 0.0
         ]
     ]
+    (; reactions, observed)
 end
 
 const JUMP_PROCESSES_METHODS = Dict(
@@ -1047,10 +1072,11 @@ function build(definition::Definition; method::Symbol = :default)
         )
         for g in definition.genes
     )
-
+    (; reactions, observed) = regulation(genes; definition, t)
     @named reaction_system = ReactionSystem(
-        regulation(genes; definition, t),
-        t,
+        reactions,
+        t;
+        observed,
         systems=collect(values(genes)),
         initial_conditions=Dict(
             getproperty(genes[g.name], kind) => getfield(g.base_rates, kind)

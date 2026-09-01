@@ -463,6 +463,22 @@ function Models.each_event(callback::Function, x::JumpState)
         end
         previous = current
     end
+
+    for observable in ModelingToolkit.observables(system(Models.unwrap(x.f!)))
+        values = solution[observable]
+        isempty(values) && continue
+
+        name = normalize_name(observable)
+        previous = first(values)
+        callback(first(solution.t), name, previous)
+
+        for (t, current) in Iterators.drop(zip(solution.t, values), 1)
+            if current != previous
+                callback(t, name, current)
+            end
+            previous = current
+        end
+    end
 end
 
 function (f!::JumpModel)(
