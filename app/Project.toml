@@ -14,5 +14,4 @@ GeneRegulatorySystems = {path = ".."}
 Pluto = {url = "https://github.com/JuliaPluto/Pluto.jl", rev = "1fb98297ad471796cb6d5ea185ede166a4e4dad2"}
 
 [compat]
-Bonito = "5"
 Pluto = "1"

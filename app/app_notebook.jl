@@ -323,20 +323,22 @@ begin
     splash_screen
 
     using Revise
+    
     using GeneRegulatorySystems
+    const GRS = GeneRegulatorySystems
+    const Vis = GRS.Visualisation
+    
     using CytoscapeJS
-    using Bonito
     using PlutoUI
     const Layout = PlutoUI.ExperimentalLayout
     import JSON
     import Colors
-    const GRS = GeneRegulatorySystems
-    const Vis = GRS.Visualisation
+    
+    using Bonito
     using WGLMakie
-    WGLMakie.activate!(resize_to=(:parent, nothing))
-    Bonito.Page()
+    WGLMakie.activate!()
+    
     Revise.includet(@__MODULE__, "src/JSONEditor.jl")
-    Revise.includet(@__MODULE__, "src/ValueMultiSelect.jl")
     Revise.includet(@__MODULE__, "src/Trajectories.jl")
 end;
 
@@ -439,25 +441,35 @@ track_options = sort!(unique(vcat(
 # ╔═╡ 5f81c7aa-273c-49e2-ae61-f473f810d6c3
 default_tracks = string.(filter(in((:activity, :mrnas, :proteins)), track_options))
 
-# ╔═╡ 8ab6e516-5c63-4879-8807-2f40b02b782d
-simulation = let
-	sink = Trajectories.Sink()
-	error = nothing
+# ╔═╡ 7ada2ec2-7fcb-42e2-a483-cd08aca2940a
+default_genes = collect(Iterators.take(string.(network.groups), 6))
 
-	if run_simulation && !isnothing(schedule!) 
-		try
-			schedule!(; trace=sink)
-		catch exception
-			error=sprint(showerror, exception)
-		end
-	end
-	(; sink, error)
+# ╔═╡ a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
+simulation = let
+    sink = Trajectories.Sink()
+    error = nothing
+
+    if run_simulation && !isnothing(schedule!)
+        try
+            schedule!(; trace=sink)
+        catch exception
+            error = sprint(showerror, exception)
+        end
+    end
+
+    (; sink, error)
 end
 
-# ╔═╡ 97e727ea-04ed-493f-9fea-ed768c268d22
+# ╔═╡ fc7d5237-870d-4549-9b95-d6eb7d508203
 path_options = let
-	paths = sort!(unique(segment.path for segment in simulation.sink.index))
-	["" => "all paths"; (path => path for path in paths)...]
+    paths = sort!(unique(
+        segment.path for segment in simulation.sink.index
+    ))
+
+    [
+        "" => "all paths"
+        (path => path for path in paths)...
+    ]
 end
 
 # ╔═╡ 8bff584c-2987-4584-aaed-b1ce4104d891
@@ -467,67 +479,64 @@ group_colors = merge(
 )
 
 # ╔═╡ 4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
-cytoscape_graph = CytoscapeJS.Cytoscape(network; group_colors, height="600px");
-
-# ╔═╡ 336d7ff6-065e-43b6-8733-eac22ee17454
-selected_genes = cytoscape_graph.selection
-
-# ╔═╡ dd82c44b-e5f7-4ca9-b968-39be6a186e88
-filter(cytoscape_graph.stylesheet[]) do rule
-    haskey(rule.style, "label")
-end
+cytoscape_graph = let
+    graph = CytoscapeJS.Cytoscape(network; group_colors, height="600px")
+    graph.selection[] = collect(Iterators.take(string.(network.groups), 6))
+    graph
+end;
 
 # ╔═╡ aa943167-f20e-4349-a14b-d512c8005ab0
 network_view = Bonito.App(cytoscape_graph);
 
-# ╔═╡ d66ca2cc-2d24-4f3e-86dc-b24ff4cdabbe
+# ╔═╡ 7afe83d0-f91c-4d6d-80bb-82d634af59ed
+trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
+	[
+        :raw => "individual branches",
+        :aggregate => "branch aggregate",
+    ];
+    default=:raw,
+);
+
+# ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
 selection_header = @htl("""
 <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem;">
     <div style="display: flex; flex-direction: column; gap: 0.4rem;">
         <label class="dashboard-option">
-            <span>model: </span>
+            <span>model:</span>
             $(@bind selected_model PlutoUI.Select(
-                Vis.paths(network),
+                Vis.paths(network);
                 default=nothing,
             ))
         </label>
 
         <label class="dashboard-option">
-            <span>path: </span>
+            <span>path:</span>
             $(@bind selected_path PlutoUI.Select(path_options))
         </label>
 
         <label class="dashboard-option">
-            <span>display: </span>
-            $(@bind aggregate_mode PlutoUI.Select(
-                [
-                    :raw => "individual branches",
-                    :aggregate => "branch aggregate",
-                ];
-                default=:raw,
-            ))
+            <span>display:</span>
+            $(trajectory_display_control)
         </label>
     </div>
-
     <label
         class="dashboard-option"
         style="flex-direction: column; align-items: flex-start;"
     >
         <span>genes:</span>
-        $(observable_multiselect(
-            cytoscape_graph.selection,
-            network.groups;
+        $(@bind selected_gene_names PlutoUI.MultiSelect(
+            string.(network.groups),
+            default=default_genes;
             size=4,
         ))
     </label>
-    
     <label
         class="dashboard-option"
         style="flex-direction: column; align-items: flex-start;"
     >
         <span>tracks:</span>
-        $(@bind selected_tracks ValueMultiSelect(
-            track_options;
+        $(@bind selected_tracks PlutoUI.MultiSelect(
+            string.(track_options);
             default=default_tracks,
             size=4,
         ))
@@ -538,23 +547,28 @@ selection_header = @htl("""
 # ╔═╡ 27655a09-73a0-4370-933b-2e4fe2e2ecf3
 CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, selected_model);
 
-# ╔═╡ aa2a8407-1c59-41c9-a1a7-88c0c63d24ed
-trajectories = Trajectories.prepare(simulation.sink; path=selected_path)
+# ╔═╡ 24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
+trajectories = Trajectories.prepare(
+    simulation.sink;
+    path=selected_path,
+)
 
-# ╔═╡ d8d20437-7e9d-4d0c-a179-57bb8c50c773
-trajectory_view = with_theme(dark_mode ? theme_dark() : Theme()) do
-    Trajectories.render(
-        trajectories;
-        tracks=selected_tracks,
-        selected_genes,
-        default_genes=Set(Iterators.take(string.(network.groups), 6)),
-        group_colors,
-        aggregate_mode,
-    )
+# ╔═╡ 68f213e4-a64b-4aa1-bf77-9b131e657193
+trajectory_view = if run_simulation && !ismissing(dark_mode)
+    with_theme(dark_mode ? theme_dark() : Theme()) do
+        Trajectories.render(
+            trajectories;
+            tracks=selected_tracks,
+            selected_genes=selected_gene_names,
+            default_genes=Set{String}(),
+            group_colors,
+            aggregate_mode,
+        )
+    end
 end;
 
 # ╔═╡ 1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
-trajectory_panel = @htl("""
+trajectory_panel = isnothing(trajectory_view) ? nothing : @htl("""
 <div class="trajectory-panel">
     $(trajectory_view)
 
@@ -565,7 +579,6 @@ trajectory_panel = @htl("""
             box-sizing: border-box;
             overflow: hidden;
             clip-path: inset(0 round 6px);
-
             border: 1px solid #d4d4d8;
             border-radius: 6px;
         }
@@ -689,27 +702,55 @@ end;
 
 # ╔═╡ c7d9d65d-10d4-4e88-a034-cd258438f54c
 let
-    column(children...) = Layout.DOMElement(
+    slot(key, child) = isnothing(child) ? nothing : Layout.DOMElement(
         tag="div",
         attributes=Dict(
+            "key" => key,
+            "style" => "display: contents;",
+        ),
+        children=[child],
+    )
+
+    column(key, children...) = Layout.DOMElement(
+        tag="div",
+        attributes=Dict(
+            "key" => key,
             "style" => "display: grid; gap: 0.75rem; min-width: 0;",
         ),
-        children=collect(children),
+        children=collect(Iterators.filter(!isnothing, children)),
     )
 
     columns = Layout.DOMElement(
         tag="div",
-        attributes=Dict("class" => "dashboard-columns"),
+        attributes=Dict(
+            "key" => "dashboard-columns",
+            "class" => "dashboard-columns",
+        ),
         children=[
-            column(schedule_panel),
-            column(network_view, selection_header, trajectory_panel),
+            column(
+                "schedule-column",
+                slot("schedule-panel", schedule_panel),
+            ),
+            column(
+                "visualisation-column",
+                slot("network-view", network_view),
+                slot("selection-header", selection_header),
+                slot("trajectory-panel", trajectory_panel),
+            ),
         ],
     )
 
     dashboard = Layout.DOMElement(
         tag="div",
-        attributes=Dict("class" => "grs-dashboard"),
-        children=[app_header, schedule_header, columns],
+        attributes=Dict(
+            "key" => "grs-dashboard",
+            "class" => "grs-dashboard",
+        ),
+        children=[
+            slot("app-header", app_header),
+            slot("schedule-header", schedule_header),
+            columns,
+        ],
     )
 
     PlutoUI.WideCell(dashboard; max_width=1600)
@@ -734,15 +775,15 @@ end
 # ╠═27655a09-73a0-4370-933b-2e4fe2e2ecf3
 # ╠═aa943167-f20e-4349-a14b-d512c8005ab0
 # ╟─c7cd57d6-464d-4dbc-b955-699802e60be7
-# ╠═336d7ff6-065e-43b6-8733-eac22ee17454
 # ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3
-# ╠═d66ca2cc-2d24-4f3e-86dc-b24ff4cdabbe
-# ╠═8ab6e516-5c63-4879-8807-2f40b02b782d
-# ╠═97e727ea-04ed-493f-9fea-ed768c268d22
-# ╠═aa2a8407-1c59-41c9-a1a7-88c0c63d24ed
-# ╠═d8d20437-7e9d-4d0c-a179-57bb8c50c773
-# ╠═dd82c44b-e5f7-4ca9-b968-39be6a186e88
+# ╠═7ada2ec2-7fcb-42e2-a483-cd08aca2940a
+# ╠═7afe83d0-f91c-4d6d-80bb-82d634af59ed
+# ╠═b81a8c99-9653-4288-846a-f56c873698cc
+# ╠═a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
+# ╠═fc7d5237-870d-4549-9b95-d6eb7d508203
+# ╠═24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
+# ╠═68f213e4-a64b-4aa1-bf77-9b131e657193
 # ╠═1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
 # ╟─35e4e15a-e1f7-42c1-8ded-5714234811c6
 # ╠═4a29ccba-5cdc-47e1-953c-5eee6d1edbe7

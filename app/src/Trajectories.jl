@@ -118,7 +118,7 @@ function sampling_window(axis)
         width = max(widths(viewport)[1], 1)
         (; from, to, width)
     end
-    WGLMakie.Observables.async_latest(window)
+    window
 end
 
 function bounded_xlimits(limits, from, to)
@@ -158,6 +158,17 @@ function constrain_x!(axis, from, to)
                 stop_at_extent=name === :scrollzoom,
             ),
         )
+    end
+    register_interaction!(axis, :reset_view) do event, axis
+        if event isa MouseEvent && event.type == MouseEvent.leftdoubleclick
+            lower, upper = extrema(axis.targetlimits[])
+            axis.targetlimits[] = Rect2d(
+                (from, lower[2]),
+                (to - from, upper[2] - lower[2]),
+            )
+            return Consume(true)
+        end
+        Consume(false)
     end
 
     nothing
@@ -199,13 +210,14 @@ function viewport_values(points, from, to)
     values
 end
 
-function aggregate(::Type{FractionSeries}, catenations; index, from, to, width)
+function aggregate(::Type{FractionSeries}, catenations; index, selected_genes, from, to, width)
     rows = index isa AbstractVector ? index : eachrow(index)
     grouped = Dict()
 
     for catenation in values(catenations)
         for (dimension, detail) in catenation.trajectories
             detail isa FractionIntegral || continue
+            dimension.group in selected_genes || continue
             push!(get!(grouped, dimension, []), (catenation, detail))
         end
     end
@@ -266,13 +278,14 @@ function linear_quantile(values, q)
     values[lower] * (1 - weight) + values[upper] * weight
 end
 
-function aggregate(::Type{CountSeries}, catenations; index, from, to, width)
+function aggregate(::Type{CountSeries}, catenations; index, selected_genes, from, to, width)
     rows = index isa AbstractVector ? index : eachrow(index)
     grouped = Dict()
 
     for catenation in values(catenations)
         for (dimension, detail) in catenation.trajectories
             detail isa CountPyramid || continue
+            dimension.group in selected_genes || continue
             push!(get!(grouped, dimension, []), (catenation, detail))
         end
     end
@@ -336,31 +349,25 @@ function render!(
     catenations;
     index,
     group_colors,
-    visible,
+    selected_genes,
     window,
 )
     rows = map(window) do view
-        aggregate(FractionSeries, catenations; index, view...)
+        aggregate(
+            FractionSeries,
+            catenations;
+            index,
+            selected_genes,
+            view...,
+        )
     end
     dimensions = sort!(collect(keys(rows[])); by=dimension -> dimension.group)
-    visibilities = [visible(dimension.group) for dimension in dimensions]
-    layout = if isempty(dimensions)
-        Observable(Dict{Dimension, Int}())
-    else
-        map(visibilities...) do shown...
-            visible_dimensions = (
-                dimension
-                for (dimension, isshown) in zip(dimensions, shown)
-                if isshown
-            )
-            Dict(
-                dimension => row
-                for (row, dimension) in enumerate(visible_dimensions)
-            )
-        end
-    end
+    row_numbers = Dict(
+        dimension => row
+        for (row, dimension) in enumerate(dimensions)
+    )
 
-    visual = map(rows, layout) do all_rows, row_numbers
+    visual = map(rows) do all_rows
         shown = sort!(collect(keys(row_numbers)); by=dimension -> row_numbers[dimension])
         row_count = max(length(shown), 1)
         edges = isempty(all_rows) ? [0.0, 1.0] : first(values(all_rows)).ts
@@ -424,11 +431,10 @@ function render!(
     catenations;
     index,
     group_colors,
-    visible,
+    selected_genes,
     window
 )
     point_sets = Observable[]
-    visibilities = Observable[]
 
     for catenation in values(catenations)
         paths = unique(
@@ -440,6 +446,7 @@ function render!(
 
         for (dimension, detail) in catenation.trajectories
             detail isa CountPyramid || continue
+            dimension.group in selected_genes || continue
             points = map(window) do view
                 series = resample(detail; view...)
                 isempty(series.ts) && return Point2f[]
@@ -456,21 +463,18 @@ function render!(
             end
 
             gene = dimension.group
-            visibility = visible(gene)
             tooltip = join([
                 "gene: $gene",
                 "path: $(join(paths, " → "))",
             ], "\n")
 
             push!(point_sets, points)
-            push!(visibilities, visibility)
 
             stairs!(
                 axis,
                 points;
                 step=:post,
                 color=get(group_colors, gene, :gray),
-                visible=visibility,
                 inspector_label=(_, _, _) -> tooltip,
             )
         end
@@ -480,15 +484,14 @@ function render!(
         view = window[]
         visible_points = (
             viewport_values(points[], view.from, view.to)
-            for (points, visibility) in zip(point_sets, visibilities)
-            if visibility[]
+            for points in point_sets
         )
         fit_y!(
             axis,
             (value for values in visible_points for value in values),
         )
     end
-    onany(update_y, window, visibilities...; update=true)
+    on(update_y, window; update=true)
 
     axis
 end
@@ -500,19 +503,23 @@ function render!(
     catenations;
     index,
     group_colors,
-    visible,
+    selected_genes,
     window,
 )
     rows = map(window) do view
-        aggregate(CountSeries, catenations; index, view...)
+        aggregate(
+            CountSeries,
+            catenations;
+            index,
+            selected_genes,
+            view...,
+        )
     end
     dimensions = sort!(collect(keys(rows[])); by=dimension -> dimension.group)
-    visibilities = Observable[]
 
     for dimension in dimensions
         gene = dimension.group
         color = get(group_colors, gene, :gray)
-        visibility = visible(gene)
         data = Ref(rows[][dimension])
 
         lower = Point2f.(data[].ts, data[].q25)
@@ -524,7 +531,6 @@ function render!(
             lower,
             upper;
             color=(color, 0.18),
-            visible=visibility,
             inspectable=false,
         )
         line_plot = lines!(
@@ -532,7 +538,6 @@ function render!(
             center;
             color,
             linewidth=1.5,
-            visible=visibility,
             inspector_label=(_, i, _) -> join([
                 "gene: $gene",
                 "median: $(round(data[].median[i]; digits=2))",
@@ -540,8 +545,6 @@ function render!(
                 "branches: $(data[].nlive[i])",
             ], "\n"),
         )
-        push!(visibilities, visibility)
-
         on(rows) do all_rows
             data[] = all_rows[dimension]
             update!(
@@ -549,15 +552,14 @@ function render!(
                 Point2f.(data[].ts, data[].q25),
                 Point2f.(data[].ts, data[].q75),
             )
-            update!(line_plot, Point2f.(data[].ts, data[].median))
+            update!(line_plot; arg1=Point2f.(data[].ts, data[].median))
         end
     end
 
     update_y = function (_...)
         visible_data = (
             rows[][dimension]
-            for (dimension, visibility) in zip(dimensions, visibilities)
-            if visibility[]
+            for dimension in dimensions
         )
         fit_y!(
             axis,
@@ -569,7 +571,7 @@ function render!(
             ),
         )
     end
-    onany(update_y, rows, visibilities...; update=true)
+    on(update_y, rows; update=true)
 
     axis
 end
@@ -586,7 +588,11 @@ function render(
     aggregate_mode in (:raw, :aggregate) || throw(
         ArgumentError("aggregate_mode must be :raw or :aggregate"),
     )
-    tracks = collect(tracks)
+    tracks = Symbol.(collect(tracks))
+    selected_genes = selected_genes isa Observable ? selected_genes[] : selected_genes
+    selected_genes = selected_genes isa AbstractString ?
+        Set([String(selected_genes)]) : Set(string.(selected_genes))
+    isempty(selected_genes) && union!(selected_genes, string.(default_genes))
     figure = Figure(size=(1200, 180 * max(1, length(tracks))))
     axes = Axis[]
     from = isempty(trajectories.index) ? 0.0 :
@@ -594,31 +600,29 @@ function render(
     to = isempty(trajectories.index) ? 1.0 :
         maximum(segment.to for segment in trajectories.index)
 
-    visible(gene) = lift(selected_genes) do selected
-        if selected isa AbstractString
-            gene == selected
-        elseif isempty(selected)
-            gene in default_genes
-        else
-            gene in selected
-        end
-    end
-
     for (row, kind) in enumerate(tracks)
         axis = Axis(
             figure[row, 1];
-            ylabel=kind,
+            ylabel=string(kind),
             xlabel=row == length(tracks) ? "time" : "",
             backgroundcolor=:transparent,
             xzoomlock=false,
             yzoomlock=true,
             xpanlock=false,
             ypanlock=true,
+            panbutton=Mouse.left,
         )
         push!(axes, axis)
         constrain_x!(axis, from, to)
+        if from < to
+            lower, upper = extrema(axis.targetlimits[])
 
-        kind = Symbol(kind)
+            axis.targetlimits[] = Rect2d(
+                (from, lower[2]),
+                (to - from, upper[2] - lower[2]),
+            )
+        end
+
         catenations = get(
             trajectories.catenations,
             kind,
@@ -634,7 +638,7 @@ function render(
                 catenations;
                 index=trajectories.index,
                 group_colors,
-                visible,
+                selected_genes,
                 window,
             )
         else
@@ -644,16 +648,13 @@ function render(
                 catenations;
                 index=trajectories.index,
                 group_colors,
-                visible,
+                selected_genes,
                 window,
             )
         end
     end
 
     length(axes) > 1 && linkxaxes!(axes...)
-    if !isempty(trajectories.index) && !isempty(axes)
-        from < to && xlims!(first(axes), from, to)
-    end
 
     DataInspector(figure; fontsize=12, show_bbox_indicators=false)
     figure
