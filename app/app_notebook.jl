@@ -484,6 +484,9 @@ end;
 # ╔═╡ aa943167-f20e-4349-a14b-d512c8005ab0
 network_view = Bonito.App(cytoscape_graph);
 
+# ╔═╡ 9d3f61ba-52c7-4e08-b7a4-1c8e05fd3b62
+physics_control = @bind physics_running PlutoUI.Switch(default=true);
+
 # ╔═╡ 7afe83d0-f91c-4d6d-80bb-82d634af59ed
 trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
 	[
@@ -804,6 +807,7 @@ end
 # ╠═27655a09-73a0-4370-933b-2e4fe2e2ecf3
 # ╠═aa943167-f20e-4349-a14b-d512c8005ab0
 # ╟─6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
+# ╟─9d3f61ba-52c7-4e08-b7a4-1c8e05fd3b62
 # ╠═0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 # ╟─c7cd57d6-464d-4dbc-b955-699802e60be7
 # ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9

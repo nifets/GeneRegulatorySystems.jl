@@ -88,6 +88,8 @@ function CytoscapeJS.Cytoscape(
     wheelSensitivity=0.1,
     selectionType="additive",
     include_shared=false,
+    physics=DEFAULT_PHYSICS,
+    edge_lengths=DEFAULT_EDGE_LENGTHS,
     kwargs...
 )
     strength_reference = get_strength_reference(network)
@@ -104,7 +106,9 @@ function CytoscapeJS.Cytoscape(
         gene_elements;
         layout=(; layout..., name="preset"),
         stylesheet,
-        setup=network_setup(gene_elements, species_elements, layout),
+        setup=network_setup(
+            gene_elements, species_elements, layout, physics, edge_lengths,
+        ),
         wheelSensitivity,
         selectionType,
         tooltip_attributes,
@@ -871,6 +875,139 @@ function persistent_layout(layout)
     """
 end
 
+const DEFAULT_PHYSICS = (;
+    name="cola",
+    infinite=true,
+    fit=false,
+    randomize=false,
+    animate=true,
+    avoidOverlap=true,
+    handleDisconnected=false,
+)
+
+const DEFAULT_EDGE_LENGTHS = (; gene=300, strong=100, species=20)
+
+function continuous_physics(physics, edge_lengths)
+    JS.js"""
+    cy => {
+        const layoutState = globalThis.__grsNetworkLayout ??= {};
+        layoutState.physicsEnabled ??= true;
+
+        let running = null;
+        let internal = false;
+
+        const stop = () => {
+            if (!running) return;
+            const layout = running;
+            running = null;
+            internal = true;
+            try { layout.stop(); } catch (error) { }
+            internal = false;
+        };
+        const lengths = $(edge_lengths);
+        const edgeLength = edge => {
+            if (edge.source().isChild() || edge.target().isChild()) {
+                return lengths.species;
+            }
+            const kind = edge.data("kind");
+            if (kind !== "activation" && kind !== "repression") {
+                return lengths.gene;
+            }
+            const norm = Number(edge.data("strengthNorm"));
+            const strength = Number.isFinite(norm) ? norm : 0.5;
+            return lengths.gene - strength * (lengths.gene - lengths.strong);
+        };
+        const start = () => {
+            if (running || cy.destroyed()) return;
+            if (!layoutState.physicsEnabled || document.hidden) return;
+            internal = true;
+            running = cy.layout({ ...$(physics), edgeLength });
+            running.run();
+            internal = false;
+        };
+        const restart = () => { stop(); start(); };
+
+        cy.on("layoutstart", () => { if (!internal) stop(); });
+        cy.on("layoutstop", () => { if (!internal) start(); });
+        cy.on("destroy", stop);
+
+        let pending = null;
+        cy.on("add remove", () => {
+            if (internal) return;
+            clearTimeout(pending);
+            pending = setTimeout(restart, 0);
+        });
+        cy.on("destroy", () => clearTimeout(pending));
+
+        const visibility = () => document.hidden ? stop() : start();
+        document.addEventListener("visibilitychange", visibility);
+        cy.on("destroy", () => {
+            document.removeEventListener("visibilitychange", visibility);
+        });
+
+        const enable = () => { layoutState.physicsEnabled = true; start(); };
+        const disable = () => { layoutState.physicsEnabled = false; stop(); };
+        cy.scratch("physics", { start: enable, stop: disable });
+
+        const host = cy.container();
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+
+        if (getComputedStyle(host).position === "static") {
+            host.style.position = "relative";
+        }
+
+        Object.assign(toggle.style, {
+            position: "absolute",
+            right: "12px",
+            bottom: "44px",
+            zIndex: "100",
+            width: "24px",
+            height: "24px",
+            display: "grid",
+            placeItems: "center",
+            padding: "0",
+            border: "none",
+            background: "transparent",
+            color: "inherit",
+            cursor: "pointer",
+        });
+
+        function updateToggle() {
+            const enabled = layoutState.physicsEnabled;
+            const label = enabled ? "pause physics" : "resume physics";
+            toggle.title = label;
+            toggle.setAttribute("aria-label", label);
+            toggle.style.opacity = enabled ? "1" : "0.4";
+            toggle.innerHTML = `
+                <svg viewBox="0 0 16 16" width="13" height="13"
+                     aria-hidden="true" fill="currentColor">
+                    <circle cx="8" cy="8" r="2"/>
+                    <ellipse cx="8" cy="8" rx="7" ry="3"
+                             fill="none" stroke="currentColor"/>
+                    <ellipse cx="8" cy="8" rx="7" ry="3"
+                             fill="none" stroke="currentColor"
+                             transform="rotate(60 8 8)"/>
+                    <ellipse cx="8" cy="8" rx="7" ry="3"
+                             fill="none" stroke="currentColor"
+                             transform="rotate(120 8 8)"/>
+                </svg>`;
+        }
+
+        toggle.addEventListener("click", event => {
+            event.stopPropagation();
+            layoutState.physicsEnabled ? disable() : enable();
+            updateToggle();
+        });
+        host.appendChild(toggle);
+        updateToggle();
+        cy.on("destroy", () => toggle.remove());
+
+        start();
+    }
+    """
+end
+
 function automatic_theme()
     JS.js"""
     cy => {
@@ -902,11 +1039,15 @@ function automatic_theme()
     """
 end
 
-function network_setup(gene_elements, species_elements, layout)
+function network_setup(
+    gene_elements, species_elements, layout, physics, edge_lengths,
+)
     adaptive = adaptive_view(gene_elements, species_elements)
     selection = selection_view()
     parameters = inline_parameters()
     setup_layout = persistent_layout(layout)
+    setup_physics = isnothing(physics) ? nothing :
+        continuous_physics(physics, edge_lengths)
     theme = automatic_theme()
 
     JS.js"""
@@ -915,6 +1056,7 @@ function network_setup(gene_elements, species_elements, layout)
         const setupSelection = $(selection);
         const setupParameters = $(parameters);
         const setupLayout = $(setup_layout);
+        const setupPhysics = $(setup_physics);
         const setupTheme = $(theme);
 
         await setupLayout(cy);
@@ -922,6 +1064,7 @@ function network_setup(gene_elements, species_elements, layout)
         setupAdaptive(cy);
         setupSelection(cy);
         setupParameters(cy);
+        if (setupPhysics) setupPhysics(cy);
     }
     """
 end
