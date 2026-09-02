@@ -1,112 +1,3 @@
-module Trajectories
-
-using WGLMakie
-using GeneRegulatorySystems: Models, Scheduling
-using GeneRegulatorySystems.Visualisation:
-    Catenation,
-    Series,
-    CountSeries,
-    FractionSeries,
-    Dimension,
-    cut, place!, seriestype
-
-@kwdef mutable struct Sink
-    lock::ReentrantLock = ReentrantLock()
-    i::Int = 0
-    index = []
-
-    is::Vector{Int} = Int[]
-    ts::Vector{Float64} = Float64[]
-    names::Vector{Symbol} = Symbol[]
-    values::Vector{Float64} = Float64[]
-end
-
-(sink::Sink)(; context...) = nothing
-
-
-function (sink::Sink)(
-    state;
-    path,
-    from,
-    primitive!,
-    into=nothing,
-    context...,
-)
-    lock(sink.lock) do
-        sink.i += 1
-        to = Models.t(state)
-        model = primitive!.path
-        label = get(primitive!.bindings, :label, "")
-        count = 0
-        if !isnothing(into)
-            Models.each_event(state) do t, name, value
-                push!(sink.is, sink.i)
-                push!(sink.ts, Float64(t))
-                push!(sink.names, Symbol(name))
-                push!(sink.values, Float64(value))
-                count += 1
-            end
-        end
-        push!(
-            sink.index,
-            (
-                i=sink.i,
-                path=String(path),
-                from=Float64(from),
-                to=Float64(to),
-                model=string(model),
-                label=string(label),
-                count,
-                into=isnothing(into) ? "" : String(into)
-            ))
-    end
-    nothing
-end
-
-function prepare(sink::Sink; path="")
-    index = filter(sink.index) do segment
-        Scheduling.ispathprefix(path, segment.path)
-    end
-    catenations = cut(index)
-    by_segment = Dict(
-        index[position].i => catenation
-        for catenation in catenations
-        for position in catenation.segments
-    )
-    for j in eachindex(sink.is)
-        segment = sink.is[j]
-        haskey(by_segment, segment) || continue
-        place!(
-            by_segment[segment],
-            sink.ts[j],
-            sink.names[j],
-            sink.values[j]
-        )
-    end
-    by_kind = Dict{Symbol, Dict{Int, Catenation}}()
-    for catenation in catenations
-        split = Dict{Symbol, Catenation}()
-        for (dimension, series) in catenation.trajectories
-            selected = get!(split, dimension.kind) do
-                Catenation(segments=catenation.segments)
-            end
-            selected.trajectories[dimension] = series
-        end
-        for (kind, selected) in split
-            from = index[first(selected.segments)].from
-            to = index[last(selected.segments)].to
-            get!(
-                Dict{Int, Catenation},
-                by_kind,
-                kind
-            )[last(selected.segments)] = lod(selected; from, to)
-        end
-    end
-    (; index, catenations=by_kind)
-end
-
-include("TrajectoryLOD.jl")
-
 function sampling_window(axis)
     window = map(
         axis.finallimits,
@@ -228,11 +119,9 @@ function aggregate(::Type{FractionSeries}, catenations; index, selected_genes, f
     for (dimension, members) in grouped
         values = Float64[]
         nlive = Int[]
-        paths = Vector{String}[]
 
         for (left, right) in zip(edges, @view(edges[2:end]))
             active = Float64[]
-            live_paths = String[]
 
             for (catenation, detail) in members
                 branch_from = rows[first(catenation.segments)].from
@@ -249,21 +138,13 @@ function aggregate(::Type{FractionSeries}, catenations; index, selected_genes, f
                 value = (right_area - left_area) / duration
                 isfinite(value) || continue
                 push!(active, value)
-
-                for position in catenation.segments
-                    segment = rows[position]
-                    if segment.from < covered_to && segment.to > covered_from
-                        push!(live_paths, String(segment.path))
-                    end
-                end
             end
 
             push!(values, isempty(active) ? NaN : sum(active) / length(active))
             push!(nlive, length(active))
-            push!(paths, unique!(live_paths))
         end
 
-        result[dimension] = (; ts=copy(edges), values, nlive, paths)
+        result[dimension] = (; ts=copy(edges), values, nlive)
     end
     result
 end
@@ -300,16 +181,6 @@ function aggregate(::Type{CountSeries}, catenations; index, selected_genes, from
         q25 = Float64[]
         q75 = Float64[]
         nlive = Int[]
-        paths = String[]
-
-        for (catenation, _) in members
-            append!(
-                paths,
-                String(rows[position].path)
-                for position in catenation.segments
-            )
-        end
-        unique!(paths)
 
         for t in ts
             values = Float64[]
@@ -337,7 +208,7 @@ function aggregate(::Type{CountSeries}, catenations; index, selected_genes, from
             end
         end
 
-        result[dimension] = (; ts, median, q25, q75, nlive, paths)
+        result[dimension] = (; ts, median, q25, q75, nlive)
     end
 
     result
@@ -391,7 +262,7 @@ function render!(
                 tooltips[column, row] = join([
                     "gene: $gene",
                     "activity: $(round(value; digits=2))",
-                    "paths: $(join(data.paths[column], ", "))",
+                    "branches: $(data.nlive[column])",
                     "time: $(round(data.ts[column]; digits=2))–$(round(data.ts[column + 1]; digits=2))",
                 ], "\n")
             end
@@ -438,7 +309,7 @@ function render!(
 
     for catenation in values(catenations)
         paths = unique(
-            index[position].path
+            describe(index[position])
             for position in catenation.segments
         )
 
@@ -583,6 +454,7 @@ function render(
     default_genes,
     group_colors,
     aggregate_mode=:raw,
+    gene_limit=10,
 )
     aggregate_mode = Symbol(aggregate_mode)
     aggregate_mode in (:raw, :aggregate) || throw(
@@ -593,6 +465,8 @@ function render(
     selected_genes = selected_genes isa AbstractString ?
         Set([String(selected_genes)]) : Set(string.(selected_genes))
     isempty(selected_genes) && union!(selected_genes, string.(default_genes))
+    length(selected_genes) > gene_limit &&
+        (selected_genes = Set(first(sort!(collect(selected_genes)), gene_limit)))
     figure = Figure(size=(1200, 180 * max(1, length(tracks))))
     axes = Axis[]
     from = isempty(trajectories.index) ? 0.0 :
@@ -658,6 +532,4 @@ function render(
 
     DataInspector(figure; fontsize=12, show_bbox_indicators=false)
     figure
-end
-
 end

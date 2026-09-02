@@ -44,6 +44,11 @@ md"""
 ### Run simulation
 """
 
+# ╔═╡ 76d9a00b-10fa-4248-b460-6c5abb2424dd
+md"""
+#### Plot embedding
+"""
+
 # ╔═╡ 35e4e15a-e1f7-42c1-8ded-5714234811c6
 md"""
 ## Styling
@@ -115,6 +120,32 @@ md"""
     }
     .dashboard-option select {
         font-size: 0.7rem;
+    }
+    .dashboard-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 1rem;
+    }
+    .dashboard-header.stacked {
+        align-items: flex-start;
+    }
+    .dashboard-option.stacked {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .panel {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        overflow: hidden;
+        clip-path: inset(0 round 6px);
+        border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+        border-radius: 6px;
+    }
+    .panel > * {
+        width: 100% !important;
+        max-width: 100% !important;
     }
     .schedule-panel {
         display: flex;
@@ -339,7 +370,7 @@ begin
     WGLMakie.activate!()
     
     Revise.includet(@__MODULE__, "src/JSONEditor.jl")
-    Revise.includet(@__MODULE__, "src/Trajectories.jl")
+    Revise.includet(@__MODULE__, "src/trajectories/trajectories.jl")
 end;
 
 # ╔═╡ a2866674-5e4e-4738-b18e-90d122d2d161
@@ -354,7 +385,7 @@ end;
 
 # ╔═╡ 7abbbe81-3d0b-4d94-a69f-32c66514687f
 schedule_header = @htl("""
-<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">
+<div style="display: flex; align-items: center; gap: 1rem;">
 <label class="dashboard-option">
     <span>schedule:</span>
     $(@bind selected_schedule PlutoUI.Select(schedule_options))
@@ -364,10 +395,10 @@ schedule_header = @htl("""
     $(@bind run_simulation PlutoUI.Switch(default=false))
 </label>
 </div>
-""")
+""");
 
 # ╔═╡ 8392f056-369c-45fb-9c00-719172e82616
-schedule_editor = @bind schedule_json JSONEditor(read(selected_schedule, String); height="800px")
+schedule_editor = @bind schedule_json JSONEditor(read(selected_schedule, String); height="800px");
 
 # ╔═╡ 69993fb8-daca-4b61-a711-907009dbee24
 begin
@@ -426,17 +457,17 @@ schedule_panel = Layout.DOMElement(
 			schedule_editor,
 			schedule_feedback
 		]
-)
+);
 
 # ╔═╡ 180bf479-2269-4d94-a9f6-b3c060c17ab9
-track_options = unique(vcat(
+track_options = intersect([:activity, :elongations, :premrnas, :mrnas, :proteins, :active, :inactive], unique(vcat(
     [:activity],
     [
         Symbol(last(split(string(node.name), '.')))
         for node in network.nodes
         if node.kind === :species && !isnothing(node.parent)
     ],
-))
+)))
 
 # ╔═╡ 5f81c7aa-273c-49e2-ae61-f473f810d6c3
 default_tracks = string.(filter(in((:activity, :mrnas, :proteins)), track_options))
@@ -464,7 +495,7 @@ end
 group_colors = merge(
     Vis.group_colors(network.groups).colors,
     something(gene_colors, Dict())
-)
+);
 
 # ╔═╡ 6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
 shared_species_control = @bind show_shared_species PlutoUI.Switch(default=false);
@@ -483,9 +514,6 @@ end;
 
 # ╔═╡ aa943167-f20e-4349-a14b-d512c8005ab0
 network_view = Bonito.App(cytoscape_graph);
-
-# ╔═╡ 9d3f61ba-52c7-4e08-b7a4-1c8e05fd3b62
-physics_control = @bind physics_running PlutoUI.Switch(default=true);
 
 # ╔═╡ 7afe83d0-f91c-4d6d-80bb-82d634af59ed
 trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
@@ -511,10 +539,16 @@ trajectory_tracks_control = @bind selected_tracks PlutoUI.MultiSelect(
 );
 
 # ╔═╡ fc7d5237-870d-4549-9b95-d6eb7d508203
-path_options = [
-    "" => "all paths"
-    (path => path for path in Vis.paths(simulation.sink.index))...
-]
+path_options = let
+    labels = Vis.path_labels(simulation.sink.index)
+    [
+        "" => "all paths"
+        (
+            path => (haskey(labels, path) ? "$path ($(labels[path]))" : path)
+            for path in Vis.paths(simulation.sink.index)
+        )...
+    ]
+end
 
 # ╔═╡ 1a7f39c4-5d82-4e60-b3a1-8c46f207de92
 trajectory_path_control = @bind selected_path PlutoUI.Select(path_options);
@@ -527,7 +561,7 @@ end
 
 # ╔═╡ 0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 network_header = @htl("""
-<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 1rem;">
+<div class="dashboard-header">
     <label class="dashboard-option">
         <span>model:</span>
         $(@bind selected_model PlutoUI.Select(
@@ -552,8 +586,37 @@ trajectories = Trajectories.prepare(
     path=selected_path,
 )
 
+# ╔═╡ 2f83b1d6-9c07-4e58-a3f1-64d0b8ea7c19
+phase_toggle_control = @bind show_phase PlutoUI.Switch(default=true);
+
+# ╔═╡ be5ca395-d977-4082-a700-60730ba278df
+phase_components_control = @bind phase_components PlutoUI.Select(
+    [2 => "2D", 3 => "3D"];
+    default=2,
+);
+
+# ╔═╡ 4a1c8e77-2d95-4f3a-b0e6-1c7d9f2a4b58
+phase_track_control = @bind phase_track PlutoUI.Select(
+    string.(track_options);
+    default=in("proteins", string.(track_options)) ? "proteins" : first(string.(track_options)),
+);
+
+# ╔═╡ 3e6f81b2-5c94-4a17-8d02-6f4b19ac7e35
+figure_inputs = (
+    cytoscape_graph,
+    dark_mode,
+    selected_path,
+    selected_tracks,
+    selected_gene_names,
+    aggregate_mode,
+    phase_track,
+    phase_components,
+    show_phase,
+);
+
 # ╔═╡ 68f213e4-a64b-4aa1-bf77-9b131e657193
 trajectory_view = if run_simulation && !ismissing(dark_mode)
+    figure_inputs # a rendered figure cannot be re-rendered into a new session
     with_theme(dark_mode ? theme_dark() : Theme()) do
         Trajectories.render(
             trajectories;
@@ -568,7 +631,7 @@ end;
 
 # ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
 selection_header = isnothing(trajectory_view) ? nothing : @htl("""
-<div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem;">
+<div class="dashboard-header stacked">
     <div style="display: flex; flex-direction: column; gap: 0.4rem;">
         <label class="dashboard-option">
             <span>path:</span>
@@ -580,50 +643,70 @@ selection_header = isnothing(trajectory_view) ? nothing : @htl("""
             $(trajectory_display_control)
         </label>
     </div>
-    <label
-        class="dashboard-option"
-        style="flex-direction: column; align-items: flex-start;"
-    >
+    <label class="dashboard-option stacked">
         <span>genes:</span>
         $(trajectory_genes_control)
     </label>
-    <label
-        class="dashboard-option"
-        style="flex-direction: column; align-items: flex-start;"
-    >
+    <label class="dashboard-option stacked">
         <span>tracks:</span>
         $(trajectory_tracks_control)
     </label>
 </div>
 """);
 
-# ╔═╡ 1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
-trajectory_panel = isnothing(trajectory_view) ? nothing : @htl("""
-<div class="trajectory-panel">
-    $(trajectory_view)
+# ╔═╡ c5a70e39-4b82-4d16-9f38-e07a2c61b845
+phase_available = run_simulation && length(selected_gene_names) >= 2
 
-    <style>
-        .trajectory-panel {
-            width: 100%;
-            min-width: 0;
-            box-sizing: border-box;
-            overflow: hidden;
-            clip-path: inset(0 round 6px);
-            border: 1px solid #d4d4d8;
-            border-radius: 6px;
-        }
+# ╔═╡ 9e8abb2f-4531-4c57-a15f-547938cbd6e4
+phase_snapshot = if phase_available && show_phase
+    Trajectories.snapshots(
+        simulation.sink,
+        selected_gene_names,
+        phase_track;
+        path=selected_path,
+    )
+end
 
-        .trajectory-panel > * {
-            width: 100% !important;
-            max-width: 100% !important;
-        }
+# ╔═╡ ffa07386-4884-4f9d-9e2d-29da604aec87
+phase_projection = if !isnothing(phase_snapshot) && !isempty(phase_snapshot.states)
+    Trajectories.project(
+        phase_snapshot;
+        components=phase_components,
+        group_colors,
+    )
+end
 
-        @media (prefers-color-scheme: dark) {
-            .trajectory-panel {
-                border-color: #6b7280;
-            }
-        }
-    </style>
+# ╔═╡ b8a9bd86-5abc-48ed-87f5-534fe604bfb3
+phase_view = if !isnothing(phase_projection) && !ismissing(dark_mode)
+    figure_inputs # a rendered figure cannot be re-rendered into a new session
+    with_theme(dark_mode ? theme_dark() : Theme()) do
+        Trajectories.render(phase_projection)
+    end
+end
+
+# ╔═╡ 7f2b6c14-8a03-4d51-9e27-3b5c0a8f61d9
+phase_header = !phase_available ? nothing : @htl("""
+<div class="dashboard-header">
+    <label class="dashboard-option">
+        <span>projection:</span>
+        $(phase_toggle_control)
+    </label>
+
+    $(isnothing(phase_view) ? nothing : @htl("""
+    <label class="dashboard-option">
+        <span>track:</span>
+        $(phase_track_control)
+    </label>
+
+    <label class="dashboard-option">
+        <span>components:</span>
+        $(phase_components_control)
+    </label>
+
+    <span style="opacity: 0.5; font-size: 0.75rem;">
+        $(string(phase_projection.method))
+    </span>
+    """))
 </div>
 """);
 
@@ -750,6 +833,15 @@ let
         children=collect(Iterators.filter(!isnothing, children)),
     )
 
+    panel(key, child) = isnothing(child) ? nothing : Layout.DOMElement(
+        tag="div",
+        attributes=Dict(
+            "key" => key,
+            "class" => "panel",
+        ),
+        children=[child],
+    )
+
     columns = Layout.DOMElement(
         tag="div",
         attributes=Dict(
@@ -758,15 +850,18 @@ let
         ),
         children=[
             column(
-                "schedule-column",
+                "left-column",
+                slot("schedule-header", schedule_header),
                 slot("schedule-panel", schedule_panel),
+                slot("phase-header", phase_header),
+                slot("phase-panel", panel("phase-panel", phase_view)),
             ),
             column(
-                "visualisation-column",
+                "right-column",
                 slot("network-header", network_header),
-                slot("network-view", network_view),
+                slot("network-view", panel("network-view", network_view)),
                 slot("selection-header", selection_header),
-                slot("trajectory-panel", trajectory_panel),
+                slot("trajectory-panel", panel("trajectory-panel", trajectory_view)),
             ),
         ],
     )
@@ -779,7 +874,6 @@ let
         ),
         children=[
             slot("app-header", app_header),
-            slot("schedule-header", schedule_header),
             columns,
         ],
     )
@@ -806,23 +900,31 @@ end
 # ╠═4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
 # ╠═27655a09-73a0-4370-933b-2e4fe2e2ecf3
 # ╠═aa943167-f20e-4349-a14b-d512c8005ab0
-# ╟─6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
-# ╟─9d3f61ba-52c7-4e08-b7a4-1c8e05fd3b62
+# ╠═6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
 # ╠═0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 # ╟─c7cd57d6-464d-4dbc-b955-699802e60be7
 # ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3
 # ╠═7ada2ec2-7fcb-42e2-a483-cd08aca2940a
 # ╠═7afe83d0-f91c-4d6d-80bb-82d634af59ed
-# ╟─1a7f39c4-5d82-4e60-b3a1-8c46f207de92
-# ╟─2b8e4ad5-6f93-4c71-9d02-af57b318ce03
-# ╟─3c9f5be6-70a4-4d82-8e13-b0681c429df1
+# ╠═1a7f39c4-5d82-4e60-b3a1-8c46f207de92
+# ╠═2b8e4ad5-6f93-4c71-9d02-af57b318ce03
+# ╠═3c9f5be6-70a4-4d82-8e13-b0681c429df1
 # ╠═b81a8c99-9653-4288-846a-f56c873698cc
 # ╠═a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
 # ╠═fc7d5237-870d-4549-9b95-d6eb7d508203
+# ╠═3e6f81b2-5c94-4a17-8d02-6f4b19ac7e35
 # ╠═24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
 # ╠═68f213e4-a64b-4aa1-bf77-9b131e657193
-# ╠═1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
+# ╠═76d9a00b-10fa-4248-b460-6c5abb2424dd
+# ╠═2f83b1d6-9c07-4e58-a3f1-64d0b8ea7c19
+# ╠═be5ca395-d977-4082-a700-60730ba278df
+# ╠═4a1c8e77-2d95-4f3a-b0e6-1c7d9f2a4b58
+# ╠═c5a70e39-4b82-4d16-9f38-e07a2c61b845
+# ╠═9e8abb2f-4531-4c57-a15f-547938cbd6e4
+# ╠═ffa07386-4884-4f9d-9e2d-29da604aec87
+# ╠═b8a9bd86-5abc-48ed-87f5-534fe604bfb3
+# ╠═7f2b6c14-8a03-4d51-9e27-3b5c0a8f61d9
 # ╟─35e4e15a-e1f7-42c1-8ded-5714234811c6
 # ╠═4a29ccba-5cdc-47e1-953c-5eee6d1edbe7
 # ╠═8eb4f0d7-ef76-4ca7-a117-a48685c12667

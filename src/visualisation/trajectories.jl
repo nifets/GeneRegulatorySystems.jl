@@ -50,6 +50,14 @@ paths(index) = sort!(unique(
     if !isempty(prefix)
 ))
 
+describe(path, label) = isempty(label) ? String(path) : "$path ($label)"
+
+path_labels(index) = Dict(
+    string(segment.path) => string(segment.label)
+    for segment in index
+    if !isempty(segment.label)
+)
+
 function cut(index)
     segments = collect(index)
     branches = Dict{String, Vector{Int}}()
@@ -98,3 +106,6 @@ end
 
 place!(catenation::Catenation, event) =
     place!(catenation, event.t, event.name, event.value)
+
+(series::Series)(t) =
+    (i = searchsortedlast(series.ts, t); iszero(i) ? NaN : series.ys[i])
