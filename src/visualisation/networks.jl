@@ -203,6 +203,15 @@ function merge_networks(networks::Network...)
     )
 end
 
+models(index, path::AbstractString="") = sort!(unique(
+    segment.model
+    for segment in index
+    if Models.Scheduling.ispathprefix(path, segment.path)
+))
+
+models(network::Network, index, path::AbstractString="") =
+    filter(in(keys(network.parameters)), models(index, path))
+
 present_at(item, path) = isempty(item.present_in) || path in item.present_in
 
 function path_view(network::Network, path::String)

@@ -429,14 +429,14 @@ schedule_panel = Layout.DOMElement(
 )
 
 # ╔═╡ 180bf479-2269-4d94-a9f6-b3c060c17ab9
-track_options = sort!(unique(vcat(
+track_options = unique(vcat(
     [:activity],
     [
         Symbol(last(split(string(node.name), '.')))
         for node in network.nodes
         if node.kind === :species && !isnothing(node.parent)
     ],
-)))
+))
 
 # ╔═╡ 5f81c7aa-273c-49e2-ae61-f473f810d6c3
 default_tracks = string.(filter(in((:activity, :mrnas, :proteins)), track_options))
@@ -460,27 +460,23 @@ simulation = let
     (; sink, error)
 end
 
-# ╔═╡ fc7d5237-870d-4549-9b95-d6eb7d508203
-path_options = let
-    paths = sort!(unique(
-        segment.path for segment in simulation.sink.index
-    ))
-
-    [
-        "" => "all paths"
-        (path => path for path in paths)...
-    ]
-end
-
 # ╔═╡ 8bff584c-2987-4584-aaed-b1ce4104d891
 group_colors = merge(
     Vis.group_colors(network.groups).colors,
     something(gene_colors, Dict())
 )
 
+# ╔═╡ 6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
+shared_species_control = @bind show_shared_species PlutoUI.Switch(default=false);
+
 # ╔═╡ 4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
 cytoscape_graph = let
-    graph = CytoscapeJS.Cytoscape(network; group_colors, height="600px")
+    graph = CytoscapeJS.Cytoscape(
+        network;
+        group_colors,
+        height="600px",
+        include_shared=show_shared_species,
+    )
     graph.selection[] = collect(Iterators.take(string.(network.groups), 6))
     graph
 end;
@@ -497,49 +493,49 @@ trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
     default=:raw,
 );
 
-# ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
-selection_header = @htl("""
-<div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem;">
-    <div style="display: flex; flex-direction: column; gap: 0.4rem;">
-        <label class="dashboard-option">
-            <span>model:</span>
-            $(@bind selected_model PlutoUI.Select(
-                Vis.paths(network);
-                default=nothing,
-            ))
-        </label>
+# ╔═╡ 2b8e4ad5-6f93-4c71-9d02-af57b318ce03
+trajectory_genes_control = @bind selected_gene_names PlutoUI.MultiSelect(
+    string.(network.groups),
+    default=default_genes;
+    size=4,
+);
 
-        <label class="dashboard-option">
-            <span>path:</span>
-            $(@bind selected_path PlutoUI.Select(path_options))
-        </label>
+# ╔═╡ 3c9f5be6-70a4-4d82-8e13-b0681c429df1
+trajectory_tracks_control = @bind selected_tracks PlutoUI.MultiSelect(
+    string.(track_options);
+    default=default_tracks,
+    size=4,
+);
 
-        <label class="dashboard-option">
-            <span>display:</span>
-            $(trajectory_display_control)
-        </label>
-    </div>
-    <label
-        class="dashboard-option"
-        style="flex-direction: column; align-items: flex-start;"
-    >
-        <span>genes:</span>
-        $(@bind selected_gene_names PlutoUI.MultiSelect(
-            string.(network.groups),
-            default=default_genes;
-            size=4,
+# ╔═╡ fc7d5237-870d-4549-9b95-d6eb7d508203
+path_options = [
+    "" => "all paths"
+    (path => path for path in Vis.paths(simulation.sink.index))...
+]
+
+# ╔═╡ 1a7f39c4-5d82-4e60-b3a1-8c46f207de92
+trajectory_path_control = @bind selected_path PlutoUI.Select(path_options);
+
+# ╔═╡ 5e2c8a17-4b39-4f6d-9c81-7d0a3b5e62f4
+model_options = let
+    options = Vis.models(network, simulation.sink.index, selected_path)
+    isempty(options) ? Vis.paths(network) : options
+end
+
+# ╔═╡ 0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
+network_header = @htl("""
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 1rem;">
+    <label class="dashboard-option">
+        <span>model:</span>
+        $(@bind selected_model PlutoUI.Select(
+            model_options;
+            default=length(model_options) == 1 ? only(model_options) : nothing,
         ))
     </label>
-    <label
-        class="dashboard-option"
-        style="flex-direction: column; align-items: flex-start;"
-    >
-        <span>tracks:</span>
-        $(@bind selected_tracks PlutoUI.MultiSelect(
-            string.(track_options);
-            default=default_tracks,
-            size=4,
-        ))
+
+    <label class="dashboard-option">
+        <span>shared species:</span>
+        $(shared_species_control)
     </label>
 </div>
 """);
@@ -566,6 +562,37 @@ trajectory_view = if run_simulation && !ismissing(dark_mode)
         )
     end
 end;
+
+# ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
+selection_header = isnothing(trajectory_view) ? nothing : @htl("""
+<div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem;">
+    <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+        <label class="dashboard-option">
+            <span>path:</span>
+            $(trajectory_path_control)
+        </label>
+
+        <label class="dashboard-option">
+            <span>display:</span>
+            $(trajectory_display_control)
+        </label>
+    </div>
+    <label
+        class="dashboard-option"
+        style="flex-direction: column; align-items: flex-start;"
+    >
+        <span>genes:</span>
+        $(trajectory_genes_control)
+    </label>
+    <label
+        class="dashboard-option"
+        style="flex-direction: column; align-items: flex-start;"
+    >
+        <span>tracks:</span>
+        $(trajectory_tracks_control)
+    </label>
+</div>
+""");
 
 # ╔═╡ 1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
 trajectory_panel = isnothing(trajectory_view) ? nothing : @htl("""
@@ -733,6 +760,7 @@ let
             ),
             column(
                 "visualisation-column",
+                slot("network-header", network_header),
                 slot("network-view", network_view),
                 slot("selection-header", selection_header),
                 slot("trajectory-panel", trajectory_panel),
@@ -770,15 +798,21 @@ end
 # ╟─69993fb8-daca-4b61-a711-907009dbee24
 # ╠═ea610eb8-caa3-4639-8d25-58904e600e52
 # ╟─16d523e4-ebec-4d6e-b5e1-7aaf949ec5fc
+# ╠═5e2c8a17-4b39-4f6d-9c81-7d0a3b5e62f4
 # ╠═8bff584c-2987-4584-aaed-b1ce4104d891
 # ╠═4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
 # ╠═27655a09-73a0-4370-933b-2e4fe2e2ecf3
 # ╠═aa943167-f20e-4349-a14b-d512c8005ab0
+# ╟─6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
+# ╠═0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 # ╟─c7cd57d6-464d-4dbc-b955-699802e60be7
 # ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3
 # ╠═7ada2ec2-7fcb-42e2-a483-cd08aca2940a
 # ╠═7afe83d0-f91c-4d6d-80bb-82d634af59ed
+# ╟─1a7f39c4-5d82-4e60-b3a1-8c46f207de92
+# ╟─2b8e4ad5-6f93-4c71-9d02-af57b318ce03
+# ╟─3c9f5be6-70a4-4d82-8e13-b0681c429df1
 # ╠═b81a8c99-9653-4288-846a-f56c873698cc
 # ╠═a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
 # ╠═fc7d5237-870d-4549-9b95-d6eb7d508203

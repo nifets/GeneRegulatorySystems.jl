@@ -1,5 +1,6 @@
 const BRANCH_PATTERN = r"^(?:.*/\d+)?"
 const DIMENSION_PATTERN = r"(?<group>.+)\.(?<kind>.+)"
+const SEPARATOR_PATTERN = r"[/+.-]"
 
 struct Dimension
     kind::Symbol
@@ -38,6 +39,16 @@ end
 Catenation(; segments, trajectories=Dict{Dimension, Series}()) = Catenation(segments, trajectories)
 
 branch(path::AbstractString) = string(match(BRANCH_PATTERN, path).match)
+
+ancestors(path::AbstractString) =
+    [path[1:prevind(path, found.offset)] for found in eachmatch(SEPARATOR_PATTERN, path)]
+
+paths(index) = sort!(unique(
+    prefix
+    for segment in index
+    for prefix in [ancestors(segment.path); string(segment.path)]
+    if !isempty(prefix)
+))
 
 function cut(index)
     segments = collect(index)

@@ -87,11 +87,18 @@ function CytoscapeJS.Cytoscape(
     attributes=graph_attributes(; height, min_height),
     wheelSensitivity=0.1,
     selectionType="additive",
+    include_shared=false,
     kwargs...
 )
     strength_reference = get_strength_reference(network)
-    gene_elements = elements(Vis.gene_view(network), network, Val(:gene), group_colors, strength_reference)
-    species_elements = elements(Vis.species_view(network), network, Val(:species), group_colors, strength_reference)
+    gene_elements = elements(
+        Vis.gene_view(network; include_shared),
+        network, Val(:gene), group_colors, strength_reference,
+    )
+    species_elements = elements(
+        Vis.species_view(network; include_shared),
+        network, Val(:species), group_colors, strength_reference,
+    )
 
     CytoscapeJS.Cytoscape(
         gene_elements;
