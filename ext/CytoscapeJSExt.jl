@@ -122,6 +122,15 @@ node_color(node, group_colors) = css_color(
 
 present_in(item) = sort!(collect(item.present_in))
 
+node_tooltip(node, network) =
+    node.kind === :reaction ? Vis.node_tooltip(node, network) : nothing
+
+function node_variants(node, network)
+    variants = Vis.node_variants(node, network)
+    node.kind === :reaction && return variants
+    Dict(path => (; variant..., tooltip=nothing) for (path, variant) in variants)
+end
+
 function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_colors)
     colour = parse(Colorant, node_color(node, group_colors))
     text_colour = Lab(colour).l < 50 ? "#ffffff" : "#1a1a1a"
@@ -131,10 +140,10 @@ function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_
         kind=string(node.kind),
         colour=css_color(colour),
         textColour=text_colour,
-        tooltip=Vis.node_tooltip(node, network),
+        tooltip=node_tooltip(node, network),
         parameters=Vis.parameter_lines(node, network),
         presentIn=present_in(node),
-        variants=(; presentIn=Vis.node_variants(node, network)),
+        variants=(; presentIn=node_variants(node, network)),
         view="gene",
     )
     orphan = node.kind === :species && node.parent === nothing ? " orphan-species" : ""
@@ -147,10 +156,10 @@ function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, gro
         label=Vis.node_label(node),
         kind=string(node.kind),
         colour=node_color(node, group_colors),
-        tooltip=Vis.node_tooltip(node, network),
+        tooltip=node_tooltip(node, network),
         parameters=Vis.parameter_lines(node, network),
         presentIn=present_in(node),
-        variants=(; presentIn=Vis.node_variants(node, network)),
+        variants=(; presentIn=node_variants(node, network)),
         view="species",
     )
     node.parent === nothing ||
@@ -162,6 +171,7 @@ end
 function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_reference) where V
     loop = link.from === link.to ? " loop" : ""
     regulation = get(link.properties, :regulation, link.kind)
+    label = Vis.link_label(link)
     data=(;
         id="$V:$(link.kind):$(link.from):$(link.to)",
         source=string(link.from),
@@ -171,11 +181,11 @@ function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_r
         edgeColour=get(Vis.LINK_COLORS, regulation, "#c4c4cb"),
         scope=string(link.scope),
         view=string(V),
-        label=Vis.link_label(link),
         tooltip=Vis.link_tooltip(link, network),
         presentIn=present_in(link),
         variants=(; presentIn=Vis.link_variants(link, network)),
     )
+    isnothing(label) || (data = merge(data, (; label)))
     if haskey(link.properties, :at)
         at = Float64(get(link.properties, :at, 1))
         data = merge(data, (; at, strengthNorm=inv(1 + sqrt(at / strength_reference))))
@@ -195,7 +205,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "transition-property" => "opacity",
             "transition-duration" => "250ms",
         )),
-        (; selector="node[label]", style=Dict(
+        (; selector="node[?label]", style=Dict(
             "label" => "data(label)",
         )),
         (; selector="node.gene", style=Dict(
@@ -289,7 +299,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "color" => "#f4f4f5",
             "text-background-color" => "#27272a",
         )),
-        (; selector="edge[label]", style=Dict(
+        (; selector="edge[?label]", style=Dict(
             "label" => "data(label)",
         )),
         (; selector="edge[view =\"species\"]", style=Dict(

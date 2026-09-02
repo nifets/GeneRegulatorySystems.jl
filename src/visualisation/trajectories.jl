@@ -30,10 +30,12 @@ seriestype(kind::Symbol) = seriestype(Val(kind))
 seriestype(::Val) = CountSeries
 seriestype(::Val{:activity}) = FractionSeries
 
-@kwdef struct Catenation
+struct Catenation{T}
     segments::Vector{Int}
-    series::Dict{Dimension, Series} = Dict{Dimension, Series}()
+    trajectories::Dict{Dimension, T}
 end
+
+Catenation(; segments, trajectories=Dict{Dimension, Series}()) = Catenation(segments, trajectories)
 
 branch(path::AbstractString) = string(match(BRANCH_PATTERN, path).match)
 
@@ -74,7 +76,7 @@ end
 
 function place!(catenation::Catenation, t::Real, name::Symbol, value::Real)
     dimension = Dimension(name)
-    series = get!(catenation.series, dimension) do
+    series = get!(catenation.trajectories, dimension) do
         seriestype(dimension)()
     end
     push!(series.ts, Float64(t))

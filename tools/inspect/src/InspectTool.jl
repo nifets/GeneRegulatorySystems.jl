@@ -138,11 +138,11 @@ function load_events(filtered; location)
     for catenation in catenations
 
         by_kind = Dict{Symbol, Catenation}()
-        for (dimension, series) in catenation.series
+        for (dimension, series) in catenation.trajectories
             catenation′ = get!(by_kind, dimension.kind) do
                 Catenation(; segments=catenation.segments)
             end
-            catenation′.series[dimension] = series
+            catenation′.trajectories[dimension] = series
         end
 
         for (kind, catenation′) in by_kind
@@ -228,7 +228,7 @@ function prepare(index; selection = Selection(), location)
             dimension.group
             for catenations in values(events)
             for catenation in values(catenations)
-            for dimension in keys(catenation.series)
+            for dimension in keys(catenation.trajectories)
             if !isempty(dimension.group)
         )
         if length(groups) > 32

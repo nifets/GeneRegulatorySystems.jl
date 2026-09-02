@@ -77,9 +77,30 @@ md"""
     .grs-dashboard {
         box-sizing: border-box;
         width: 100%;
-        overflow: hidden;
+        min-width: 0;
+        container-type: inline-size;
         font-family: Montserrat, sans-serif;
     }
+
+    .dashboard-columns {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr);
+        gap: 1rem;
+        align-items: start;
+        width: 100%;
+        min-width: 0;
+    }
+    
+    .dashboard-columns > * {
+        min-width: 0;
+    }
+    
+    @container (max-width: 900px) {
+        .dashboard-columns {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+     
     .dashboard-option {
         display: flex;
         align-items: center;
@@ -167,9 +188,63 @@ begin
     </div>
 </div>
 
+<script>
+    let icon = document.head.querySelector('link[rel~="icon"]')
+
+    if (!icon) {
+        icon = document.createElement("link")
+        icon.rel = "icon"
+        document.head.appendChild(icon)
+    }
+
+    icon.type = "image/png"
+    icon.href = $(logo_data)
+    document.title = "Gene Regulatory Systems"
+
+    const notebook = document.querySelector("pluto-notebook")
+    let quietTimer
+
+    const finishLoading = () => {
+        clearTimeout(quietTimer)
+
+        const busy = notebook.querySelectorAll(
+            "pluto-cell.running, pluto-cell.queued"
+        )
+
+        if (busy.length > 0) {
+            return
+        }
+
+        quietTimer = setTimeout(() => {
+            if (!notebook.querySelector("pluto-cell.running, pluto-cell.queued")) {
+                document.body.classList.add("grs-ready")
+                observer.disconnect()
+            }
+        }, 200)
+    }
+
+    const observer = new MutationObserver(finishLoading)
+    observer.observe(notebook, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class"],
+    })
+
+    requestAnimationFrame(finishLoading)
+
+    invalidation.then(() => {
+        clearTimeout(quietTimer)
+        observer.disconnect()
+    })
+</script>
+
 <style>
     body:not(.grs-ready) pluto-cell {
         visibility: hidden !important;
+    }
+
+    body:not(.grs-ready) loading-bar {
+        z-index: 100000;
     }
 
     .grs-splash {
@@ -204,6 +279,10 @@ begin
         display: block;
         width: 120px;
         animation: grs-spin 2s linear infinite;
+    }
+
+    .grs-splash-logo:hover img {
+        animation-duration: 1s;
     }
 
     .grs-splash-loading {
@@ -254,9 +333,11 @@ begin
     const GRS = GeneRegulatorySystems
     const Vis = GRS.Visualisation
     using WGLMakie
-    WGLMakie.activate!()
+    WGLMakie.activate!(resize_to=(:parent, nothing))
+    Bonito.Page()
     Revise.includet(@__MODULE__, "src/JSONEditor.jl")
     Revise.includet(@__MODULE__, "src/ValueMultiSelect.jl")
+    Revise.includet(@__MODULE__, "src/Trajectories.jl")
 end;
 
 # ╔═╡ a2866674-5e4e-4738-b18e-90d122d2d161
@@ -346,11 +427,38 @@ schedule_panel = Layout.DOMElement(
 )
 
 # ╔═╡ 180bf479-2269-4d94-a9f6-b3c060c17ab9
-species_options = sort!(unique(
-    Symbol(last(split(string(node.name), '.')))
-    for node in network.nodes
-    if node.kind === :species && !isnothing(node.parent)
-))
+track_options = sort!(unique(vcat(
+    [:activity],
+    [
+        Symbol(last(split(string(node.name), '.')))
+        for node in network.nodes
+        if node.kind === :species && !isnothing(node.parent)
+    ],
+)))
+
+# ╔═╡ 5f81c7aa-273c-49e2-ae61-f473f810d6c3
+default_tracks = string.(filter(in((:activity, :mrnas, :proteins)), track_options))
+
+# ╔═╡ 8ab6e516-5c63-4879-8807-2f40b02b782d
+simulation = let
+	sink = Trajectories.Sink()
+	error = nothing
+
+	if run_simulation && !isnothing(schedule!) 
+		try
+			schedule!(; trace=sink)
+		catch exception
+			error=sprint(showerror, exception)
+		end
+	end
+	(; sink, error)
+end
+
+# ╔═╡ 97e727ea-04ed-493f-9fea-ed768c268d22
+path_options = let
+	paths = sort!(unique(segment.path for segment in simulation.sink.index))
+	["" => "all paths"; (path => path for path in paths)...]
+end
 
 # ╔═╡ 8bff584c-2987-4584-aaed-b1ce4104d891
 group_colors = merge(
@@ -364,109 +472,85 @@ cytoscape_graph = CytoscapeJS.Cytoscape(network; group_colors, height="600px");
 # ╔═╡ 336d7ff6-065e-43b6-8733-eac22ee17454
 selected_genes = cytoscape_graph.selection
 
+# ╔═╡ dd82c44b-e5f7-4ca9-b968-39be6a186e88
+filter(cytoscape_graph.stylesheet[]) do rule
+    haskey(rule.style, "label")
+end
+
 # ╔═╡ aa943167-f20e-4349-a14b-d512c8005ab0
 network_view = Bonito.App(cytoscape_graph);
 
-# ╔═╡ 5f81c7aa-273c-49e2-ae61-f473f810d6c3
-selected_species = Bonito.Observable(string.(filter(in((:active, :mrnas, :proteins)), species_options)))
-
 # ╔═╡ d66ca2cc-2d24-4f3e-86dc-b24ff4cdabbe
 selection_header = @htl("""
-<div style="display: flex; align-items: center; gap: 1rem;">
-<label class="dashboard-option">
-    <span>model: </span>
-    $(@bind selected_model PlutoUI.Select(Vis.paths(network), default=nothing))
-</label>
-<label class="dashboard-option">
-    <span>genes: </span>
-    $(value_multiselect(cytoscape_graph.selection, string.(network.groups), size=2))
-</label>
-<label class="dashboard-option">
-    <span>species: </span>
-    $(value_multiselect(selected_species, string.(species_options); size=2))
-</label>
+<div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem;">
+    <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+        <label class="dashboard-option">
+            <span>model: </span>
+            $(@bind selected_model PlutoUI.Select(
+                Vis.paths(network),
+                default=nothing,
+            ))
+        </label>
+
+        <label class="dashboard-option">
+            <span>path: </span>
+            $(@bind selected_path PlutoUI.Select(path_options))
+        </label>
+
+        <label class="dashboard-option">
+            <span>display: </span>
+            $(@bind aggregate_mode PlutoUI.Select(
+                [
+                    :raw => "individual branches",
+                    :aggregate => "branch aggregate",
+                ];
+                default=:raw,
+            ))
+        </label>
+    </div>
+
+    <label
+        class="dashboard-option"
+        style="flex-direction: column; align-items: flex-start;"
+    >
+        <span>genes:</span>
+        $(observable_multiselect(
+            cytoscape_graph.selection,
+            network.groups;
+            size=4,
+        ))
+    </label>
+    
+    <label
+        class="dashboard-option"
+        style="flex-direction: column; align-items: flex-start;"
+    >
+        <span>tracks:</span>
+        $(@bind selected_tracks ValueMultiSelect(
+            track_options;
+            default=default_tracks,
+            size=4,
+        ))
+    </label>
 </div>
 """);
 
 # ╔═╡ 27655a09-73a0-4370-933b-2e4fe2e2ecf3
 CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, selected_model);
 
-# ╔═╡ 8ab6e516-5c63-4879-8807-2f40b02b782d
-simulation = let
-	events = NamedTuple[]
-	segments = NamedTuple[]
-	error = nothing
-
-	trace = function (state; path, from, into=nothing, _...)
-		i = length(segments) + 1
-		push!(segments, (; i, path, from, to=GRS.Models.t(state), into))
-		isnothing(into) || GRS.Models.each_event(state) do t, name, value
-			push!(events, (; i, t, name, value))
-		end
-	end
-	
-	if run_simulation && !isnothing(schedule!) 
-		try
-			schedule!(; trace)
-		catch exception
-			error=sprint(showerror, exception)
-		end
-	end
-	(; events, segments, error)
-end
+# ╔═╡ aa2a8407-1c59-41c9-a1a7-88c0c63d24ed
+trajectories = Trajectories.prepare(simulation.sink; path=selected_path)
 
 # ╔═╡ d8d20437-7e9d-4d0c-a179-57bb8c50c773
 trajectory_view = with_theme(dark_mode ? theme_dark() : Theme()) do
-    species = selected_species[]
-    genes = string.(network.groups)
-
-    fig = Figure(size=(900, 180 * max(1, length(species))))
-    axes = Axis[]
-
-    for (row, kind) in enumerate(species)
-        axis = Axis(
-            fig[row, 1];
-            ylabel=kind,
-            xlabel=row == length(species) ? "time" : "",
-            backgroundcolor=:transparent,
-            xzoomlock=false,
-            yzoomlock=true,
-            xpanlock=false,
-            ypanlock=true,
-        )
-        push!(axes, axis)
-
-        for gene in genes
-            data = filter(
-                event -> event.name == Symbol(gene, ".", kind),
-                simulation.events,
-            )
-            isempty(data) && continue
-
-            order = sortperm(getproperty.(data, :t))
-            stairs!(
-                axis,
-                getproperty.(data, :t)[order],
-                getproperty.(data, :value)[order];
-                color=group_colors[gene],
-                step=:post,
-                visible=lift(selected_genes) do selected
-                    gene in selected
-                end,
-            )
-        end
-
-        autolimits!(axis)
-    end
-
-    length(axes) > 1 && linkxaxes!(axes...)
-
-    if !isempty(simulation.events)
-        tmin, tmax = extrema(getproperty.(simulation.events, :t))
-        xlims!(axes[1], tmin, tmax)
-    end
-
-    fig
+    Trajectories.render(
+        trajectories;
+        tracks=selected_tracks,
+        selected_genes,
+        default_genes=Set(Iterators.take(string.(network.groups), 6)),
+        group_colors,
+        aggregate_mode,
+    )
 end;
 
 # ╔═╡ 1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
@@ -480,6 +564,7 @@ trajectory_panel = @htl("""
             min-width: 0;
             box-sizing: border-box;
             overflow: hidden;
+            clip-path: inset(0 round 6px);
 
             border: 1px solid #d4d4d8;
             border-radius: 6px;
@@ -490,13 +575,6 @@ trajectory_panel = @htl("""
             max-width: 100% !important;
         }
 
-        .trajectory-panel canvas,
-        .trajectory-panel svg {
-            display: block;
-            width: 100% !important;
-            height: auto !important;
-        }
-
         @media (prefers-color-scheme: dark) {
             .trajectory-panel {
                 border-color: #6b7280;
@@ -504,7 +582,7 @@ trajectory_panel = @htl("""
         }
     </style>
 </div>
-""")
+""");
 
 # ╔═╡ 8eb4f0d7-ef76-4ca7-a117-a48685c12667
 show_notebook_control =
@@ -512,8 +590,6 @@ show_notebook_control =
 
 # ╔═╡ a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
 begin
-    favicon = "data:image/png;base64," *
-    base64encode(read(joinpath(@__DIR__, "assets", "logo.png")))
     docs_url = "http://localhost:8001"
     app_header = @htl("""
 <header class="grs-header">
@@ -607,22 +683,7 @@ begin
     .notebook-toggle:has(input:checked) {
         opacity: 0.8;
     }
-
 </style>
-<script>
-    let icon = document.head.querySelector('link[rel~="icon"]')
-
-    if (!icon) {
-        icon = document.createElement("link")
-        icon.rel = "icon"
-        document.head.appendChild(icon)
-    }
-
-    icon.type = "image/png"
-    icon.href = $(favicon)
-    document.title = "Gene Regulatory Systems"
-    document.body.classList.add("grs-ready")
-</script>
 """);
 end;
 
@@ -638,16 +699,7 @@ let
 
     columns = Layout.DOMElement(
         tag="div",
-        attributes=Dict(
-            "style" => """
-                display: grid;
-                grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
-                gap: 1rem;
-                align-items: start;
-                width: 100%;
-                min-width: 0;
-            """,
-        ),
+        attributes=Dict("class" => "dashboard-columns"),
         children=[
             column(schedule_panel),
             column(network_view, selection_header, trajectory_panel),
@@ -687,7 +739,10 @@ end
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3
 # ╠═d66ca2cc-2d24-4f3e-86dc-b24ff4cdabbe
 # ╠═8ab6e516-5c63-4879-8807-2f40b02b782d
+# ╠═97e727ea-04ed-493f-9fea-ed768c268d22
+# ╠═aa2a8407-1c59-41c9-a1a7-88c0c63d24ed
 # ╠═d8d20437-7e9d-4d0c-a179-57bb8c50c773
+# ╠═dd82c44b-e5f7-4ca9-b968-39be6a186e88
 # ╠═1d72c85a-a4c4-4b3d-b69b-b7354cf8df0a
 # ╟─35e4e15a-e1f7-42c1-8ded-5714234811c6
 # ╠═4a29ccba-5cdc-47e1-953c-5eee6d1edbe7

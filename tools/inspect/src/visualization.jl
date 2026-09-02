@@ -55,14 +55,14 @@ function attach_trajectory_components!(
     for catenation in values(catenations)
         to = index[last(catenation.segments), :to]
         right = max(right, to)
-        for (dimension, series) in catenation.series
+        for (dimension, series) in catenation.trajectories
             top = max(top, maximum(series.ys))
             color = group_colors[dimension.group]
 
             previous_i = index[first(catenation.segments), :previous]
             if previous_i > 0 && haskey(catenations, previous_i)
                 previous_t = index[previous_i, :to]
-                previous_series = catenations[previous_i].series
+                previous_series = catenations[previous_i].trajectories
                 previous_y =
                 if haskey(previous_series, dimension)
                     previous_y = last(previous_series[dimension].ys)
@@ -141,8 +141,8 @@ function attach_trajectory_components!(
         segment = index[last(catenation.segments), :]
         segment.from < segment.to || continue
         right = max(right, segment.to)
-        s = 1 / length(catenation.series)
-        sortedseries = sort(collect(catenation.series), by = x -> x.first.group)
+        s = 1 / length(catenation.trajectories)
+        sortedseries = sort(collect(catenation.trajectories), by = x -> x.first.group)
         for (j, (dimension, series)) in enumerate(sortedseries)
             if segment.previous > 0
                 previous_t = index[segment.previous, :to]

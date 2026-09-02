@@ -19,6 +19,13 @@ import Random
 
 Progress = LogLevel(-2)
 
+function ispathprefix(prefix::AbstractString, path::AbstractString)
+    isempty(prefix) && return true
+    prefix == path && return true
+    startswith(path, prefix) || return false
+    path[nextind(path, lastindex(prefix))] in ('/', '+', '-', '.')
+end
+
 """
     Locator
 
