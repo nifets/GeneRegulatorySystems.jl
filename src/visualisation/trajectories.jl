@@ -1,6 +1,4 @@
-const BRANCH_PATTERN = r"^(?:.*/\d+)?"
 const DIMENSION_PATTERN = r"(?<group>.+)\.(?<kind>.+)"
-const SEPARATOR_PATTERN = r"[/+.-]"
 
 struct Dimension
     kind::Symbol
@@ -38,25 +36,36 @@ end
 
 Catenation(; segments, trajectories=Dict{Dimension, Series}()) = Catenation(segments, trajectories)
 
-branch(path::AbstractString) = string(match(BRANCH_PATTERN, path).match)
-
-ancestors(path::AbstractString) =
-    [path[1:prevind(path, found.offset)] for found in eachmatch(SEPARATOR_PATTERN, path)]
-
 paths(index) = sort!(unique(
-    prefix
-    for segment in index
-    for prefix in [ancestors(segment.path); string(segment.path)]
-    if !isempty(prefix)
-))
+        prefix
+        for segment in index
+        for prefix in [ancestors(segment.path); string(segment.path)]
+        if !isempty(prefix)
+    ); by=pathorder)
 
 describe(path, label) = isempty(label) ? String(path) : "$path ($label)"
 
-path_labels(index) = Dict(
-    string(segment.path) => string(segment.label)
+function path_labels(index)
+    labels = Dict{String, String}()
+    ambiguous = Set{String}()
+
     for segment in index
-    if !isempty(segment.label)
-)
+        isempty(segment.label) && continue
+        label = string(segment.label)
+        for prefix in [ancestors(segment.path); string(segment.path)]
+            isempty(prefix) && continue
+            prefix in ambiguous && continue
+            if get(labels, prefix, label) == label
+                labels[prefix] = label
+            else
+                push!(ambiguous, prefix)
+                delete!(labels, prefix)
+            end
+        end
+    end
+
+    labels
+end
 
 function cut(index)
     segments = collect(index)

@@ -1,6 +1,7 @@
 module Visualisation
 
 using ..Models
+using ..Models.Scheduling: ancestors, branch, pathorder
 import Colors: Colors, Color, @colorant_str
 
 struct GroupColors

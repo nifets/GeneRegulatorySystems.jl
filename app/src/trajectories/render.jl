@@ -65,6 +65,15 @@ function constrain_x!(axis, from, to)
     nothing
 end
 
+function set_ylimits!(axis, lower, upper)
+    limits = axis.targetlimits[]
+    axis.targetlimits[] = Rect2d(
+        (limits.origin[1], lower),
+        (limits.widths[1], upper - lower),
+    )
+    nothing
+end
+
 function fit_y!(axis, values)
     minimum_y = Inf
     maximum_y = -Inf
@@ -79,7 +88,7 @@ function fit_y!(axis, values)
     padding = minimum_y == maximum_y ?
         max(abs(minimum_y) * 0.05, 0.5) :
         (maximum_y - minimum_y) * 0.05
-    ylims!(axis, minimum_y - padding, maximum_y + padding)
+    set_ylimits!(axis, minimum_y - padding, maximum_y + padding)
     nothing
 end
 
@@ -290,7 +299,7 @@ function render!(
             eachindex(updated.shown),
             getproperty.(updated.shown, :group),
         )
-        ylims!(axis, 0.5, max(length(updated.shown), 1) + 0.5)
+        set_ylimits!(axis, 0.5, max(length(updated.shown), 1) + 0.5)
     end
     axis
 end
@@ -477,6 +486,7 @@ function render(
             ylabel=string(kind),
             xlabel=row == length(tracks) ? "time" : "",
             backgroundcolor=:transparent,
+            limits=(from < to ? (from, to) : nothing, nothing),
             xzoomlock=false,
             yzoomlock=true,
             xpanlock=false,
@@ -485,14 +495,6 @@ function render(
         )
         push!(axes, axis)
         constrain_x!(axis, from, to)
-        if from < to
-            lower, upper = extrema(axis.targetlimits[])
-
-            axis.targetlimits[] = Rect2d(
-                (from, lower[2]),
-                (to - from, upper[2] - lower[2]),
-            )
-        end
 
         catenations = get(
             trajectories.catenations,

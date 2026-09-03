@@ -19,12 +19,27 @@ import Random
 
 Progress = LogLevel(-2)
 
+const PATH_SEPARATORS = ('/', '+', '-', '.')
+const SEPARATOR_PATTERN = r"[/+.-]"
+const BRANCH_PATTERN = r"^(?:.*/\d+)?"
+const PATH_CHUNK_PATTERN = r"\d+|\D+"
+
 function ispathprefix(prefix::AbstractString, path::AbstractString)
     isempty(prefix) && return true
     prefix == path && return true
     startswith(path, prefix) || return false
-    path[nextind(path, lastindex(prefix))] in ('/', '+', '-', '.')
+    path[nextind(path, lastindex(prefix))] in PATH_SEPARATORS
 end
+
+branch(path::AbstractString) = string(match(BRANCH_PATTERN, path).match)
+
+ancestors(path::AbstractString) =
+    [path[1:prevind(path, found.offset)] for found in eachmatch(SEPARATOR_PATTERN, path)]
+
+pathchunk(text) = all(isdigit, text) ? (0, parse(Int, text), "") : (1, 0, text)
+
+pathorder(path::AbstractString) =
+    [pathchunk(matched.match) for matched in eachmatch(PATH_CHUNK_PATTERN, path)]
 
 """
     Locator
