@@ -23,7 +23,7 @@ end
 # ╔═╡ 40d24905-5708-4580-9ae5-71e1c1de01a9
 begin
     import Pkg
-    Pkg.activate(".")
+    Pkg.activate(@__DIR__)
     using Base64
     using HypertextLiteral
 end
@@ -398,12 +398,31 @@ begin
     using WGLMakie
     WGLMakie.activate!()
     
-    Revise.includet(@__MODULE__, "src/JSONEditor.jl")
-    Revise.includet(@__MODULE__, "src/pagestate.jl")
-    Revise.includet(@__MODULE__, "src/trajectories/trajectories.jl")
+    Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "JSONEditor.jl"))
+    Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "pagestate.jl"))
+    Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "trajectories", "trajectories.jl"))
 
     const Page = PageState
 end;
+
+# ╔═╡ ca8b1cea-c863-45f1-9b86-c00a5bdd09b5
+begin
+    function disable_reaction(specification::AbstractDict{Symbol})
+        disable_reaction(
+            specification[:of];
+            reaction=Symbol(specification[:reaction]),
+        )
+    end
+
+    function disable_reaction(model; reaction)
+        parameter = Symbol("reaction.$reaction.k⁺")
+        GRS.Models.remake(model, Dict(parameter => 0.0))
+    end
+
+    GRS.Specifications.constructor(
+        ::Val{Symbol("regulation/v1/disable-reaction")},
+    ) = disable_reaction
+end
 
 # ╔═╡ 032084a8-991a-4eeb-a5e9-78110b2b7cbe
 dashboard_panel(child) = isnothing(child) ? nothing : Layout.DOMElement(
@@ -422,99 +441,6 @@ dashboard_area(name, children...) = Layout.DOMElement(
 # ╔═╡ 8eb4f0d7-ef76-4ca7-a117-a48685c12667
 show_notebook_control =
     @bind show_notebook PlutoUI.Switch(default=false)
-
-# ╔═╡ a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
-begin
-    docs_url = "http://localhost:8001"
-    app_header = @htl("""
-<header class="grs-header">
-    <div class="logo-wrapper">
-        $(PlutoUI.LocalResource(joinpath(@__DIR__, "assets", "logo.png")))
-    </div>
-    <div>
-        <div class="grs-title">Gene Regulatory Systems</div>
-    </div>
-    <a class="docs-link" href="$(docs_url)" target="_blank">
-        docs <span class="external-link">↗</span>
-    </a>
-    <label class="notebook-toggle" title="show notebook internals">
-        <span>dev</span>
-        $(show_notebook_control)
-    </label>
-</header>
-
-<style>
-    .grs-header {
-        box-sizing: border-box;
-        display: flex;
-        align-items: center;
-        gap: 0.85rem;
-        width: 100%;
-        height: 60px;
-        padding: 0 1rem;
-        margin-bottom: 0.75rem;
-        border-bottom: 1px solid color-mix(
-            in srgb,
-            currentColor 15%,
-            transparent
-        );
-        font-family: Montserrat, sans-serif;
-    }
-    .logo-wrapper {
-        filter: drop-shadow(-1.4px 2px 2px rgba(150, 150, 150, 0.3));
-    }
-    .logo-wrapper img {
-        width: 40px;
-        height: 40px;
-        object-fit: contain;
-    }
-    @keyframes grs-logo-spin {
-        to {
-            transform: rotate(-360deg);
-        }
-    }
-
-    .logo-wrapper:hover img {
-        animation: grs-logo-spin 0.6s ease-in-out;
-    }
-
-    pluto-editor:has(pluto-cell.running, pluto-cell.queued)
-        .grs-header img {
-        animation: grs-logo-spin 0.3s linear infinite;
-    }
-
-    .grs-title {
-        font-size: 1.15rem;
-        font-weight: 400;
-        line-height: 1.2;
-    }
-
-    .docs-link {
-        margin-left: auto;
-        color: inherit;
-        transition: opacity 120ms ease;
-    }
-
-    .notebook-toggle {
-        display: flex;
-        gap: 0.35rem;
-        opacity: 0.3;
-        font-family: Montserrat, sans-serif;
-        font-size: 0.7rem;
-        cursor: pointer;
-        transition: opacity 120ms ease;
-    }
-
-    .notebook-toggle:hover,
-    .notebook-toggle:has(input:checked) {
-        opacity: 0.8;
-    }
-</style>
-""");
-end;
-
-# ╔═╡ 2b6e0f41-8d59-4033-a4e7-19f5b308620d
-dashboard_area("header", app_header)
 
 # ╔═╡ a2866674-5e4e-4738-b18e-90d122d2d161
 schedule_options = let
@@ -876,7 +802,101 @@ dashboard_area(
     dashboard_panel(phase_view),
 )
 
+# ╔═╡ a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
+begin
+    docs_url = "http://localhost:8001"
+    app_header = @htl("""
+<header class="grs-header">
+    <div class="logo-wrapper">
+        $(PlutoUI.LocalResource(joinpath(@__DIR__, "assets", "logo.png")))
+    </div>
+    <div>
+        <div class="grs-title">Gene Regulatory Systems</div>
+    </div>
+    <a class="docs-link" href="$(docs_url)" target="_blank">
+        docs <span class="external-link">↗</span>
+    </a>
+    <label class="notebook-toggle" title="show notebook internals">
+        <span>dev</span>
+        $(show_notebook_control)
+    </label>
+</header>
+
+<style>
+    .grs-header {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        width: 100%;
+        height: 60px;
+        padding: 0 1rem;
+        margin-bottom: 0.75rem;
+        border-bottom: 1px solid color-mix(
+            in srgb,
+            currentColor 15%,
+            transparent
+        );
+        font-family: Montserrat, sans-serif;
+    }
+    .logo-wrapper {
+        filter: drop-shadow(-1.4px 2px 2px rgba(150, 150, 150, 0.3));
+    }
+    .logo-wrapper img {
+        width: 40px;
+        height: 40px;
+        object-fit: contain;
+    }
+    @keyframes grs-logo-spin {
+        to {
+            transform: rotate(-360deg);
+        }
+    }
+
+    .logo-wrapper:hover img {
+        animation: grs-logo-spin 0.6s ease-in-out;
+    }
+
+    pluto-editor:has(pluto-cell.running, pluto-cell.queued)
+        .grs-header img {
+        animation: grs-logo-spin 0.3s linear infinite;
+    }
+
+    .grs-title {
+        font-size: 1.15rem;
+        font-weight: 400;
+        line-height: 1.2;
+    }
+
+    .docs-link {
+        margin-left: auto;
+        color: inherit;
+        transition: opacity 120ms ease;
+    }
+
+    .notebook-toggle {
+        display: flex;
+        gap: 0.35rem;
+        opacity: 0.3;
+        font-family: Montserrat, sans-serif;
+        font-size: 0.7rem;
+        cursor: pointer;
+        transition: opacity 120ms ease;
+    }
+
+    .notebook-toggle:hover,
+    .notebook-toggle:has(input:checked) {
+        opacity: 0.8;
+    }
+</style>
+""");
+end;
+
+# ╔═╡ 2b6e0f41-8d59-4033-a4e7-19f5b308620d
+dashboard_area("header", app_header)
+
 # ╔═╡ Cell order:
+# ╠═ca8b1cea-c863-45f1-9b86-c00a5bdd09b5
 # ╟─29eb1509-3cea-4c50-9d8e-24bcd8a54bbb
 # ╟─032084a8-991a-4eeb-a5e9-78110b2b7cbe
 # ╟─116c3c09-d5b1-4c86-8c08-c470df26099b

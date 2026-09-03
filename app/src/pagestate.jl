@@ -133,18 +133,22 @@ $(view)
 <script>
     const root = currentScript.parentElement
     const state = window.PageState.connect($(shared.key), "cytoscape")
-    let api = null
 
-    root.addEventListener("cytoscape:ready", event => {
-        api = event.detail.selection
-        api.set(state.get())
-    })
+    const api = () =>
+        [...root.querySelectorAll("div")]
+            .find(node => node.cytoscape?.selection)?.cytoscape.selection
 
+    const adopt = selection => selection.set(state.get())
+
+    root.addEventListener("cytoscape:ready", event => adopt(event.detail.selection))
     root.addEventListener("cytoscape:selection", event =>
         state.set(event.detail.selection)
     )
 
-    state.changed(values => api?.set(values))
+    state.changed(values => api()?.set(values))
+
+    const existing = api()
+    if (existing) adopt(existing)
 
     invalidation.then(state.dispose)
 </script>
