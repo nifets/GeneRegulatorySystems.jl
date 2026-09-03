@@ -1039,11 +1039,63 @@ function automatic_theme()
     """
 end
 
+function selection_events()
+    JS.js"""
+    cy => {
+        let internal = false;
+
+        const alive = () => !cy.destroyed() && cy.container()?.isConnected;
+
+        const selected = () => cy.nodes(":selected")
+            .filter(".gene, .orphan-species")
+            .map(node => node.id());
+
+        const apply = ids => {
+            if (!alive()) return;
+            const wanted = new Set(ids);
+            internal = true;
+            cy.batch(() => {
+                cy.nodes().filter(".gene, .orphan-species").forEach(node => {
+                    const shouldSelect = wanted.has(node.id());
+                    if (shouldSelect !== node.selected()) {
+                        shouldSelect ? node.select() : node.unselect();
+                    }
+                });
+            });
+            internal = false;
+        };
+
+        const announce = () => {
+            if (!alive() || internal) return;
+            cy.container().dispatchEvent(new CustomEvent("cytoscape:selection", {
+                bubbles: true,
+                detail: { selection: selected() },
+            }));
+        };
+
+        const api = { get: selected, set: apply };
+
+        cy.scratch("selection", api);
+        cy.on("select unselect", "node", () => queueMicrotask(announce));
+
+        setTimeout(() => {
+            if (!alive()) return;
+            cy.container().dispatchEvent(new CustomEvent("cytoscape:ready", {
+                bubbles: true,
+                detail: { selection: api },
+            }));
+            announce();
+        }, 0);
+    }
+    """
+end
+
 function network_setup(
     gene_elements, species_elements, layout, physics, edge_lengths,
 )
     adaptive = adaptive_view(gene_elements, species_elements)
     selection = selection_view()
+    events = selection_events()
     parameters = inline_parameters()
     setup_layout = persistent_layout(layout)
     setup_physics = isnothing(physics) ? nothing :
@@ -1054,6 +1106,7 @@ function network_setup(
     async cy => {
         const setupAdaptive = $(adaptive);
         const setupSelection = $(selection);
+        const setupEvents = $(events);
         const setupParameters = $(parameters);
         const setupLayout = $(setup_layout);
         const setupPhysics = $(setup_physics);
@@ -1063,6 +1116,7 @@ function network_setup(
         setupTheme(cy);
         setupAdaptive(cy);
         setupSelection(cy);
+        setupEvents(cy);
         setupParameters(cy);
         if (setupPhysics) setupPhysics(cy);
     }

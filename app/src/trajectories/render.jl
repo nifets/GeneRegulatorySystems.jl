@@ -451,7 +451,6 @@ function render(
     trajectories;
     tracks,
     selected_genes,
-    default_genes,
     group_colors,
     aggregate_mode=:raw,
     gene_limit=10,
@@ -463,10 +462,8 @@ function render(
     tracks = Symbol.(collect(tracks))
     selected_genes = selected_genes isa Observable ? selected_genes[] : selected_genes
     selected_genes = selected_genes isa AbstractString ?
-        Set([String(selected_genes)]) : Set(string.(selected_genes))
-    isempty(selected_genes) && union!(selected_genes, string.(default_genes))
-    length(selected_genes) > gene_limit &&
-        (selected_genes = Set(first(sort!(collect(selected_genes)), gene_limit)))
+        [String(selected_genes)] : unique(string.(collect(selected_genes)))
+    selected_genes = Set(last(selected_genes, gene_limit))
     figure = Figure(size=(1200, 180 * max(1, length(tracks))))
     axes = Axis[]
     from = isempty(trajectories.index) ? 0.0 :

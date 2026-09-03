@@ -16,7 +16,7 @@ docs_process = run(Cmd(docs_command; detach=true); wait=false)
 using Pluto
 
 try
-    Pluto.run(notebook=joinpath(app, "app_notebook.jl"))
+    Pluto.run(notebook=joinpath(app, "gene_regulatory_systems.jl"))
 finally
     Base.process_running(docs_process) && kill(docs_process)
 end

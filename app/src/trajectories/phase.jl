@@ -109,18 +109,20 @@ function project(snapshot; components=2, group_colors=Dict(), temperature=nothin
     )
 end
 
+axislabel(projection, i) = get(projection.labels, i, "")
+
 function phase_axis(figure, projection, n)
     n == 3 && return Axis3(
         figure[1, 1];
-        xlabel=projection.labels[1],
-        ylabel=projection.labels[2],
-        zlabel=projection.labels[3],
+        xlabel=axislabel(projection, 1),
+        ylabel=axislabel(projection, 2),
+        zlabel=axislabel(projection, 3),
         backgroundcolor=:transparent,
     )
     Axis(
         figure[1, 1];
-        xlabel=projection.labels[1],
-        ylabel=projection.labels[2],
+        xlabel=axislabel(projection, 1),
+        ylabel=axislabel(projection, 2),
         backgroundcolor=:transparent,
     )
 end
@@ -128,9 +130,9 @@ end
 function render(projection::Projection; dimmed=0.12)
     n = min(size(projection.coords, 1), 3)
     figure = Figure()
+    axis = phase_axis(figure, projection, max(n, 2))
     n >= 2 && !isempty(projection.states) || return figure
 
-    axis = phase_axis(figure, projection, n)
     point = n == 3 ? Point3f : Point2f
     hovered = Observable{Union{Nothing, Int}}(nothing)
     owners = IdDict{Any, Int}()
