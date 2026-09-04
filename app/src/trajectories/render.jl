@@ -150,7 +150,7 @@ function quantiles(samples)
 end
 
 function aggregate(::Type{CountSeries}, grouped; from, to, width)
-    bin_count = max(1, cld(round(Int, width), 2))
+    bin_count = max(1, cld(max(round(Int, width), 1), PIXELS_PER_BIN))
     step = (to - from) / bin_count
     ts = [from + (i - 0.5) * step for i in 1:bin_count]
     result = Dict{Dimension, @NamedTuple{
@@ -222,7 +222,7 @@ function integral_at(detail::FractionIntegral, t, cursor)
 end
 
 function aggregate(::Type{FractionSeries}, grouped; from, to, width)
-    bin_count = max(1, cld(round(Int, width), 2))
+    bin_count = max(1, cld(max(round(Int, width), 1), PIXELS_PER_BIN))
     edges = collect(range(from, to; length=bin_count + 1))
     result = Dict{Dimension, @NamedTuple{
         ts::Vector{Float64},

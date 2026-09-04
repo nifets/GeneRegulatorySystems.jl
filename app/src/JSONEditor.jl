@@ -94,8 +94,18 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
         const colorScheme =
             window.matchMedia("(prefers-color-scheme: dark)")
 
+        const MIN_DELAY = 600
+        const BURST_STEP = 150
+        const MAX_DELAY = 1600
+        const INVALID_DELAY = 1500
+        const BURST_WINDOW = 1200
+        const MAX_WAIT = 15000
+
         let timeout
         let view
+        let burst = 0
+        let lastChange = 0
+        let pending = 0
 
         const createEditor = contents => new EditorView({
             doc: contents,
@@ -108,11 +118,42 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
                 EditorView.updateListener.of(update => {
                     if (!update.docChanged) return
 
-                    clearTimeout(timeout)
-                    timeout = setTimeout(() => {
-                        root.value = update.state.doc.toString()
+                    const now = Date.now()
+                    burst = now - lastChange < BURST_WINDOW ? burst + 1 : 1
+                    lastChange = now
+                    pending || (pending = now)
+
+                    const contents = update.state.doc.toString()
+                    let valid = true
+                    try {
+                        JSON.parse(contents)
+                    } catch {
+                        valid = false
+                    }
+
+                    const commit = () => {
+                        pending = 0
+                        burst = 0
+                        root.value = contents
                         root.dispatchEvent(new CustomEvent("input"))
-                    }, 750)
+                    }
+
+                    clearTimeout(timeout)
+
+                    if (valid && now - pending >= MAX_WAIT) {
+                        commit()
+                        return
+                    }
+
+                    timeout = setTimeout(
+                        commit,
+                        valid ?
+                            Math.min(
+                                MIN_DELAY + BURST_STEP * (burst - 1),
+                                MAX_DELAY,
+                            ) :
+                            INVALID_DELAY,
+                    )
                 }),
             ],
         })

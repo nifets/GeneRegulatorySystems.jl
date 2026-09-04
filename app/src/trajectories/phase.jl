@@ -131,7 +131,7 @@ function project(
 )
     coloring = Symbol(coloring)
     colors = palette(Val(coloring), snapshot, group_colors, temperature)
-    swatches = coloring === :time ? Dict{Int, Nothing}() : Dict(
+    swatches = Dict(
         id => try
             isempty(declared) ? nothing : RGBf(Colors.RGB(to_color(declared)))
         catch
