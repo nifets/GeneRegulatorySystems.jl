@@ -154,6 +154,46 @@ function gene_of(species::Symbol, groups)
     isnothing(index) ? nothing : groups[index]
 end
 
+function infer_parents(network::Network)
+    parents = Dict{Symbol, Symbol}()
+    for node in network.nodes
+        node.kind === :species || continue
+        parent = isnothing(node.parent) ?
+            gene_of(node.name, network.groups) : node.parent
+        isnothing(parent) || (parents[node.name] = parent)
+    end
+
+    adopted = Dict{Symbol, Set{Union{Symbol, Nothing}}}()
+    for link in network.links
+        link.kind in (:substrate, :product) || continue
+        reaction, species = link.kind === :substrate ?
+            (link.to, link.from) : (link.from, link.to)
+        push!(
+            get!(Set{Union{Symbol, Nothing}}, adopted, reaction),
+            get(parents, species, nothing),
+        )
+    end
+
+    nodes = map(network.nodes) do node
+        parent = if node.kind === :species
+            get(parents, node.name, nothing)
+        elseif node.kind === :reaction && isnothing(node.parent)
+            owners = get(adopted, node.name, ())
+            length(owners) == 1 ? only(owners) : nothing
+        else
+            node.parent
+        end
+        Node(node.name, node.kind, parent, node.properties, node.present_in)
+    end
+
+    Network(
+        nodes=nodes,
+        links=network.links,
+        groups=network.groups,
+        parameters=network.parameters,
+    )
+end
+
 function merge_networks(networks::Network...)
     isempty(networks) && return Network()
     nodes = Dict{Tuple{Symbol, Symbol}, Node}()
@@ -163,9 +203,6 @@ function merge_networks(networks::Network...)
 
     for network in networks
         for node in network.nodes
-            parent = node.kind === :species && node.parent === nothing ?
-                gene_of(node.name, groups) : node.parent
-            node = Node(node.name, node.kind, parent, node.properties, node.present_in)
             key = (node.kind, node.name)
             if haskey(nodes, key)
                 prev = nodes[key]
@@ -195,12 +232,12 @@ function merge_networks(networks::Network...)
             end
         end
     end
-    Network(
+    infer_parents(Network(
         nodes=collect(values(nodes)),
         links=collect(values(links)),
         groups=groups,
         parameters=merge((network.parameters for network in networks)...)
-    )
+    ))
 end
 
 models(index, path::AbstractString="") = sort!(unique(
