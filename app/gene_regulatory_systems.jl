@@ -241,8 +241,24 @@ dashboard_styles = @htl("""
 
 # ╔═╡ b3f27a51-6c84-4d19-9f52-8e1c47a0d6b2
 reload_control = @bind reload_count @htl("""
-<span>
+<span class="grs-reload">
 <input type="button" value="↻" title="reload">
+<style>
+    .grs-reload input {
+        background: none;
+        border: none;
+        padding: 0;
+        color: inherit;
+        font-size: 1rem;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0.6;
+        transition: opacity 0.15s;
+    }
+    .grs-reload input:hover {
+        opacity: 1;
+    }
+</style>
 <script>
     const root = currentScript.parentElement
     const button = root.querySelector("input")
@@ -847,9 +863,7 @@ begin
     <a class="docs-link" href="$(docs_url)" target="_blank">
         docs <span class="external-link">↗</span>
     </a>
-    <label class="notebook-toggle" title="reload">
-        $(reload_control)
-    </label>
+    $(reload_control)
     <label class="notebook-toggle" title="show notebook internals">
         <span>dev</span>
         $(show_notebook_control)
