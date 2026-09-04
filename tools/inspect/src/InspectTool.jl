@@ -4,7 +4,7 @@ include("$(@__DIR__)/../../common.jl")
 include("$(@__DIR__)/visualization.jl")
 
 using .Common: artifact, warn_incompatible_versions
-using GeneRegulatorySystems.Visualisation: Catenation, Dimension, branch, cut, place!
+using GeneRegulatorySystems.Visualisation: Catenation, Dimension, branch, by_kind, cut, place!
 
 import Arrow
 using Chain
@@ -134,24 +134,7 @@ function load_events(filtered; location)
     # Finally we regroup the timeseries (i.e. break up the catenations) by
     # kind, each catenation indexed by its final segment so that we can later
     # look them up from backlinks to connect them.
-    result = Dict{Symbol, Dict{Int, Catenation}}()
-    for catenation in catenations
-
-        by_kind = Dict{Symbol, Catenation}()
-        for (dimension, series) in catenation.trajectories
-            catenation′ = get!(by_kind, dimension.kind) do
-                Catenation(; segments=catenation.segments)
-            end
-            catenation′.trajectories[dimension] = series
-        end
-
-        for (kind, catenation′) in by_kind
-            catenations′ = get!(Dict{Int, Catenation}, result, kind)
-            catenations′[last(catenation′.segments)] = catenation′
-        end
-    end
-
-    result
+    by_kind(catenations)
 end
 
 function backlinks(index)

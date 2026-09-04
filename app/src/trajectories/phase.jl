@@ -6,31 +6,36 @@ function sample(catenation::Catenation, dimension::Dimension, t)
     isnothing(series) ? NaN : transform(series, series(t))
 end
 
-function snapshots(sink::Sink, genes, track; path="", resolution=200)
+function snapshots(trace::Trace{<:AbstractVector}, genes, track; resolution=200)
     track = Symbol(track)
     dimensions = [Dimension(track, string(gene)) for gene in genes]
-    (; index, catenations) = catenate(sink; path)
+    (; index, catenations) = trace
 
-    columns = Vector{Float64}[]
+    values = Float64[]
+    column = Vector{Float64}(undef, length(dimensions))
     states = @NamedTuple{catenation::Int, t::Float64}[]
     branches = Dict{Int, String}()
+    lineages = Dict{Int, String}()
+    colors = Dict{Int, String}()
 
     for (id, catenation) in enumerate(catenations)
         from = index[first(catenation.segments)].from
         to = index[last(catenation.segments)].to
         from < to || continue
         branches[id] = describe(index, catenation)
+        lineages[id] = lineage(index, catenation)
+        colors[id] = catenation_color(index, catenation)
 
         for t in range(from, to; length=resolution)
-            column = [sample(catenation, dimension, t) for dimension in dimensions]
+            map!(dimension -> sample(catenation, dimension, t), column, dimensions)
             all(isfinite, column) || continue
-            push!(columns, column)
+            append!(values, column)
             push!(states, (; catenation=id, t))
         end
     end
 
-    X = reduce(hcat, columns; init=zeros(length(dimensions), 0))
-    (; X, states, branches, dimensions)
+    X = reshape(values, length(dimensions), :)
+    (; X, states, branches, lineages, colors, dimensions)
 end
 
 struct Projection
@@ -38,6 +43,7 @@ struct Projection
     states::Vector{@NamedTuple{catenation::Int, t::Float64}}
     colors::Vector{RGBf}
     branches::Dict{Int, String}
+    lineages::Dict{Int, String}
     method::Symbol
     labels::Vector{String}
 end
@@ -76,16 +82,6 @@ labels(::Val{:direct}, dimensions, _) =
 labels(::Val{:pca}, _, n) = ["PC $i" for i in 1:n]
 labels(::Val{:umap}, _, n) = ["UMAP $i" for i in 1:n]
 
-function mix(values, colors, temperature)
-    weights = exp.((values .- maximum(values)) ./ temperature)
-    weights ./= sum(weights)
-    RGBf(
-        sum(w * Colors.red(c) for (w, c) in zip(weights, colors)),
-        sum(w * Colors.green(c) for (w, c) in zip(weights, colors)),
-        sum(w * Colors.blue(c) for (w, c) in zip(weights, colors)),
-    )
-end
-
 function blend(X, dimensions, group_colors; temperature=nothing)
     colors = [
         Colors.RGB(to_color(get(group_colors, dimension.group, :gray)))
@@ -93,17 +89,43 @@ function blend(X, dimensions, group_colors; temperature=nothing)
     ]
     scale = isnothing(temperature) ? std(X) : temperature
     isfinite(scale) && scale > 0 || (scale = 1.0)
-    [mix(column, colors, scale) for column in eachcol(X)]
+    weights = similar(X, size(X, 1))
+
+    function mix(column)
+        weights .= exp.((column .- maximum(column)) ./ scale)
+        weights ./= sum(weights)
+        RGBf(
+            sum(w * Colors.red(c) for (w, c) in zip(weights, colors)),
+            sum(w * Colors.green(c) for (w, c) in zip(weights, colors)),
+            sum(w * Colors.blue(c) for (w, c) in zip(weights, colors)),
+        )
+    end
+
+    [mix(column) for column in eachcol(X)]
 end
 
 function project(snapshot; components=2, group_colors=Dict(), temperature=nothing)
+    colors = blend(snapshot.X, snapshot.dimensions, group_colors; temperature)
+    swatches = Dict(
+        id => try
+            isempty(declared) ? nothing : RGBf(Colors.RGB(to_color(declared)))
+        catch
+            nothing
+        end
+        for (id, declared) in snapshot.colors
+    )
+    for (i, state) in enumerate(snapshot.states)
+        declared = get(swatches, state.catenation, nothing)
+        isnothing(declared) || (colors[i] = declared)
+    end
     chosen = method(snapshot.X, components)
     coords = project(chosen, snapshot.X, components)
     Projection(
         coords,
         snapshot.states,
-        blend(snapshot.X, snapshot.dimensions, group_colors; temperature),
+        colors,
         snapshot.branches,
+        snapshot.lineages,
         unval(chosen),
         labels(chosen, snapshot.dimensions, size(coords, 1)),
     )
@@ -118,6 +140,7 @@ function phase_axis(figure, projection, n)
         ylabel=axislabel(projection, 2),
         zlabel=axislabel(projection, 3),
         backgroundcolor=:transparent,
+        viewmode=:free,
     )
     Axis(
         figure[1, 1];
@@ -127,45 +150,75 @@ function phase_axis(figure, projection, n)
     )
 end
 
-function render(projection::Projection; dimmed=0.12)
+related(a, b) =
+    Scheduling.ispathprefix(a, b) || Scheduling.ispathprefix(b, a)
+
+function render(projection::Projection; emphasis=3, budget=20_000)
     n = min(size(projection.coords, 1), 3)
     figure = Figure()
     axis = phase_axis(figure, projection, max(n, 2))
     n >= 2 && !isempty(projection.states) || return figure
 
-    point = n == 3 ? Point3f : Point2f
-    hovered = Observable{Union{Nothing, Int}}(nothing)
-    owners = IdDict{Any, Int}()
+    grouped = Dict{Int, Vector{Int}}()
+    for (i, state) in enumerate(projection.states)
+        push!(get!(Vector{Int}, grouped, state.catenation), i)
+    end
+    stride = max(1, cld(length(projection.states), budget))
+    coords = projection.coords
+    at(j) = n == 3 ?
+        Point3f(coords[1, j], coords[2, j], coords[3, j]) :
+        Point2f(coords[1, j], coords[2, j])
 
-    for id in sort!(unique(state.catenation for state in projection.states))
-        mask = findall(state -> state.catenation == id, projection.states)
-        positions = [point(view(projection.coords, 1:n, j)...) for j in mask]
+    owners = IdDict{Any, String}()
+    strands = Dict{String, Vector{Any}}()
+
+    for id in sort!(collect(keys(grouped)))
+        mask = grouped[id][begin:stride:end]
+        points = [at(j) for j in mask]
         colors = projection.colors[mask]
-        shaded = map(hovered) do current
-            alpha = isnothing(current) || current == id ? 1.0 : dimmed
-            [RGBAf(Colors.red(c), Colors.green(c), Colors.blue(c), alpha) for c in colors]
-        end
         label = get(projection.branches, id, "")
+        key = get(projection.lineages, id, "")
 
-        line = lines!(axis, positions; color=shaded, inspectable=false)
+        annotate(_, i, _) = join([
+            "branch: $label",
+            "time: $(round(projection.states[mask[i]].t; digits=2))",
+        ], "\n")
+
+        line = lines!(axis, points; color=colors, inspector_label=annotate)
         dot = scatter!(
             axis,
-            positions;
-            color=shaded,
+            points;
+            color=colors,
             markersize=4,
-            inspector_label=(_, i, _) -> join([
-                "branch: $label",
-                "time: $(round(projection.states[mask[i]].t; digits=2))",
-            ], "\n"),
+            inspector_label=annotate,
         )
-        owners[line] = id
-        owners[dot] = id
+        owners[line] = key
+        owners[dot] = key
+        push!(get!(Vector{Any}, strands, key), line)
     end
+
+    hovered = Ref{Union{Nothing, String}}(nothing)
+    active = Any[]
 
     on(events(axis.scene).mouseposition) do _
         picked, _ = pick(axis.scene)
         current = get(owners, picked, nothing)
-        hovered[] == current || (hovered[] = current)
+        hovered[] == current && return
+        hovered[] = current
+
+        for line in active
+            line.linewidth[] = 1.5
+        end
+        empty!(active)
+        isnothing(current) && return
+
+        for (key, lines) in strands
+            related(current, key) || continue
+            for line in lines
+                line.linewidth[] = emphasis
+                push!(active, line)
+            end
+        end
     end
 
     DataInspector(figure; fontsize=12, show_bbox_indicators=false)

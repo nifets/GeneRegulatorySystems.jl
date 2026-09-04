@@ -281,3 +281,18 @@ function lod(catenation::Catenation{<:Series}; from, to)
     )
     Catenation(catenation.segments, trajectories)
 end
+
+function lod(trace::Trace{<:AbstractVector})
+    (; index, catenations) = trace
+    Trace(index, Dict(
+        kind => Dict(
+            id => lod(
+                catenation;
+                from=index[first(catenation.segments)].from,
+                to=index[last(catenation.segments)].to,
+            )
+            for (id, catenation) in group
+        )
+        for (kind, group) in by_kind(catenations)
+    ))
+end

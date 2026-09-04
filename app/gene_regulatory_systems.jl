@@ -405,25 +405,6 @@ begin
     const Page = PageState
 end;
 
-# ╔═╡ ca8b1cea-c863-45f1-9b86-c00a5bdd09b5
-begin
-    function disable_reaction(specification::AbstractDict{Symbol})
-        disable_reaction(
-            specification[:of];
-            reaction=Symbol(specification[:reaction]),
-        )
-    end
-
-    function disable_reaction(model; reaction)
-        parameter = Symbol("reaction.$reaction.k⁺")
-        GRS.Models.remake(model, Dict(parameter => 0.0))
-    end
-
-    GRS.Specifications.constructor(
-        ::Val{Symbol("regulation/v1/disable-reaction")},
-    ) = disable_reaction
-end
-
 # ╔═╡ 032084a8-991a-4eeb-a5e9-78110b2b7cbe
 dashboard_panel(child) = isnothing(child) ? nothing : Layout.DOMElement(
         tag="div",
@@ -492,13 +473,13 @@ begin
 
         merge!(colours, Dict(
             string(get(gene, :name, lpad(index, digits, '0'))) => let
-                col = string(gene[:color])
+                col = string(get(gene, :color, get(gene, :colour, "")))
                 parse(Colors.Colorant, col)
                 col
             end
             for (index, gene) in enumerate(genes)
             if gene isa AbstractDict &&
-               get(gene, :color, nothing) isa AbstractString
+               get(gene, :color, get(gene, :colour, nothing)) isa AbstractString
         ))
     end
 end
@@ -644,11 +625,11 @@ dashboard_area(
 # ╔═╡ 27655a09-73a0-4370-933b-2e4fe2e2ecf3
 CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, selected_model);
 
+# ╔═╡ 5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30
+trace = Trajectories.catenate(simulation.sink; path=selected_path)
+
 # ╔═╡ 24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
-trajectories = Trajectories.prepare(
-    simulation.sink;
-    path=selected_path,
-)
+trajectories = Trajectories.lod(trace)
 
 # ╔═╡ 7afe83d0-f91c-4d6d-80bb-82d634af59ed
 trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
@@ -656,7 +637,7 @@ trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
         :raw => "individual branches",
         :aggregate => "branch aggregate",
     ];
-    default=:raw,
+    default=:aggregate,
 );
 
 # ╔═╡ 3c9f5be6-70a4-4d82-8e13-b0681c429df1
@@ -677,12 +658,7 @@ phase_track_control = @bind phase_track PlutoUI.Select(
 
 # ╔═╡ 9e8abb2f-4531-4c57-a15f-547938cbd6e4
 phase_snapshot = if run_simulation && show_phase
-    Trajectories.snapshots(
-        simulation.sink,
-        visible_genes,
-        phase_track;
-        path=selected_path,
-    )
+    Trajectories.snapshots(trace, visible_genes, phase_track)
 end
 
 # ╔═╡ be5ca395-d977-4082-a700-60730ba278df
@@ -896,7 +872,6 @@ end;
 dashboard_area("header", app_header)
 
 # ╔═╡ Cell order:
-# ╠═ca8b1cea-c863-45f1-9b86-c00a5bdd09b5
 # ╟─29eb1509-3cea-4c50-9d8e-24bcd8a54bbb
 # ╟─032084a8-991a-4eeb-a5e9-78110b2b7cbe
 # ╟─116c3c09-d5b1-4c86-8c08-c470df26099b
@@ -939,6 +914,7 @@ dashboard_area("header", app_header)
 # ╠═7afe83d0-f91c-4d6d-80bb-82d634af59ed
 # ╠═3c9f5be6-70a4-4d82-8e13-b0681c429df1
 # ╠═3e6f81b2-5c94-4a17-8d02-6f4b19ac7e35
+# ╠═5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30
 # ╠═24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
 # ╠═68f213e4-a64b-4aa1-bf77-9b131e657193
 # ╠═b81a8c99-9653-4288-846a-f56c873698cc

@@ -102,6 +102,25 @@ function cut(index)
     sort!(result, by=catenation -> first(catenation.segments))
 end
 
+function by_kind(catenations)
+    result = Dict{Symbol, Dict{Int, Catenation}}()
+
+    for catenation in catenations
+        split = Dict{Symbol, Catenation}()
+        for (dimension, series) in catenation.trajectories
+            selected = get!(split, dimension.kind) do
+                Catenation(segments=catenation.segments)
+            end
+            selected.trajectories[dimension] = series
+        end
+        for (kind, selected) in split
+            get!(Dict{Int, Catenation}, result, kind)[last(selected.segments)] = selected
+        end
+    end
+
+    result
+end
+
 function place!(catenation::Catenation, t::Real, name::Symbol, value::Real)
     dimension = Dimension(name)
     series = get!(catenation.trajectories, dimension) do

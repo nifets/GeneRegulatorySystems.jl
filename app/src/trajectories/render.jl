@@ -457,7 +457,7 @@ function render!(
 end
 
 function render(
-    trajectories;
+    trajectories::Trace{<:AbstractDict};
     tracks,
     selected_genes,
     group_colors,

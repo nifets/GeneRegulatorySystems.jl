@@ -8,7 +8,7 @@ using GeneRegulatorySystems.Visualisation:
     CountSeries,
     FractionSeries,
     Dimension,
-    branch, cut, place!, seriestype
+    branch, by_kind, cut, place!, seriestype
 import GeneRegulatorySystems.Visualisation: describe
 import Colors
 using Statistics: mean, std

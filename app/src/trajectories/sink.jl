@@ -24,7 +24,9 @@ function (sink::Sink)(
         sink.i += 1
         to = Models.t(state)
         model = primitive!.path
-        label = get(primitive!.bindings, :label, "")
+        bindings = primitive!.bindings
+        label = get(bindings, :label, "")
+        color = get(bindings, :color, get(bindings, :colour, ""))
         count = 0
         if !isnothing(into)
             Models.each_event(state) do t, name, value
@@ -44,6 +46,7 @@ function (sink::Sink)(
                 to=Float64(to),
                 model=string(model),
                 label=string(label),
+                color=string(color),
                 count,
                 into=isnothing(into) ? "" : String(into)
             ))
@@ -51,15 +54,30 @@ function (sink::Sink)(
     nothing
 end
 
+struct Trace{C}
+    index::Vector
+    catenations::C
+end
+
 describe(segment) = describe(segment.path, segment.label)
+
+function catenation_color(index, catenation::Catenation)
+    color = ""
+    for position in catenation.segments
+        isempty(index[position].color) || (color = String(index[position].color))
+    end
+    color
+end
+
+lineage(index, catenation::Catenation) =
+    branch(index[first(catenation.segments)].path)
 
 function describe(index, catenation::Catenation)
     label = ""
     for position in catenation.segments
         isempty(index[position].label) || (label = String(index[position].label))
     end
-    path = branch(index[first(catenation.segments)].path)
-    describe(path, label)
+    describe(lineage(index, catenation), label)
 end
 
 function catenate(sink::Sink; path="")
@@ -82,29 +100,5 @@ function catenate(sink::Sink; path="")
             sink.values[j]
         )
     end
-    (; index, catenations)
-end
-
-function prepare(sink::Sink; path="")
-    (; index, catenations) = catenate(sink; path)
-    by_kind = Dict{Symbol, Dict{Int, Catenation}}()
-    for catenation in catenations
-        split = Dict{Symbol, Catenation}()
-        for (dimension, series) in catenation.trajectories
-            selected = get!(split, dimension.kind) do
-                Catenation(segments=catenation.segments)
-            end
-            selected.trajectories[dimension] = series
-        end
-        for (kind, selected) in split
-            from = index[first(selected.segments)].from
-            to = index[last(selected.segments)].to
-            get!(
-                Dict{Int, Catenation},
-                by_kind,
-                kind
-            )[last(selected.segments)] = lod(selected; from, to)
-        end
-    end
-    (; index, catenations=by_kind)
+    Trace(index, catenations)
 end
