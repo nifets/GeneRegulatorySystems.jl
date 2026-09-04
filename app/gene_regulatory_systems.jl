@@ -43,6 +43,13 @@ md"""
 ### Schedule
 """
 
+# ╔═╡ c81d5f60-2a47-4e93-b6d1-5f39c284ae71
+schedule_dir = let
+    dir = joinpath(@__DIR__, "schedules")
+    isdir(dir) || mkpath(dir)
+    dir
+end;
+
 # ╔═╡ 16d523e4-ebec-4d6e-b5e1-7aaf949ec5fc
 md"""
 ### Network
@@ -232,6 +239,24 @@ dashboard_styles = @htl("""
 </style>
 """)
 
+# ╔═╡ b3f27a51-6c84-4d19-9f52-8e1c47a0d6b2
+reload_control = @bind reload_count @htl("""
+<span>
+<input type="button" value="↻" title="reload">
+<script>
+    const root = currentScript.parentElement
+    const button = root.querySelector("input")
+    let count = 0
+    root.value = count
+
+    button.addEventListener("click", () => {
+        root.value = ++count
+        root.dispatchEvent(new CustomEvent("input"))
+    })
+</script>
+</span>
+""");
+
 # ╔═╡ 0187c445-f7a0-4eae-b55d-2bd955df2c2c
 begin
     logo_data = "data:image/png;base64," *
@@ -368,6 +393,7 @@ end
 # ╔═╡ 12e75652-a3fd-11f1-9335-a986ee44237f
 begin
     splash_screen
+    reload_count
 
     using Revise
     
@@ -412,12 +438,53 @@ show_notebook_control =
 
 # ╔═╡ a2866674-5e4e-4738-b18e-90d122d2d161
 schedule_options = let
-	dir = GRS.SPECIFICATION_EXAMPLES
-	[
-		file => replace(basename(file), ".schedule.json" => "")
-		for file in sort(readdir(dir; join=true))
-		if endswith(file, ".schedule.json")
-	]
+    entries(dir) = [
+        file => replace(basename(file), ".schedule.json" => "")
+        for file in sort(readdir(dir; join=true))
+        if endswith(file, ".schedule.json")
+    ]
+    (;
+        examples=entries(GRS.SPECIFICATION_EXAMPLES),
+        user=entries(schedule_dir),
+    )
+end;
+
+# ╔═╡ d4a916c8-7b52-49f6-a8e3-1c06d5b74f29
+schedule_control = @htl("""
+<span>
+$(@bind selected_schedule PlutoUI.Select([
+    schedule_options.examples; schedule_options.user
+]))
+<script>
+    const select = currentScript.parentElement.querySelector("select")
+    const split = $(length(schedule_options.examples))
+    const options = Array.from(select.options)
+    const chosen = select.value
+
+    const group = (label, members) => {
+        if (!members.length) return
+        const holder = document.createElement("optgroup")
+        holder.label = label
+        members.forEach(option => holder.appendChild(option))
+        select.appendChild(holder)
+    }
+
+    group("examples", options.slice(0, split))
+    group("user", options.slice(split))
+    select.value = chosen
+</script>
+</span>
+""");
+
+
+# ╔═╡ 8392f056-369c-45fb-9c00-719172e82616
+schedule_editor = @bind schedule_json JSONEditor(read(selected_schedule, String); height="800px");
+
+# ╔═╡ e57c02d3-9f18-4a6b-b30c-6d2e81f45c93
+autosave = if startswith(selected_schedule, schedule_dir) &&
+        !ismissing(schedule_json) &&
+        read(selected_schedule, String) != schedule_json
+    write(selected_schedule, schedule_json)
 end;
 
 # ╔═╡ 7abbbe81-3d0b-4d94-a69f-32c66514687f
@@ -425,7 +492,7 @@ schedule_header = @htl("""
 <div class="dashboard-header">
 <label class="dashboard-option">
     <span>schedule:</span>
-    $(@bind selected_schedule PlutoUI.Select(schedule_options))
+    $(schedule_control)
 </label>
 <label class="dashboard-option">
     <span>simulate: </span>
@@ -433,9 +500,6 @@ schedule_header = @htl("""
 </label>
 </div>
 """);
-
-# ╔═╡ 8392f056-369c-45fb-9c00-719172e82616
-schedule_editor = @bind schedule_json JSONEditor(read(selected_schedule, String); height="800px");
 
 # ╔═╡ 69993fb8-daca-4b61-a711-907009dbee24
 begin
@@ -783,6 +847,9 @@ begin
     <a class="docs-link" href="$(docs_url)" target="_blank">
         docs <span class="external-link">↗</span>
     </a>
+    <label class="notebook-toggle" title="reload">
+        $(reload_control)
+    </label>
     <label class="notebook-toggle" title="show notebook internals">
         <span>dev</span>
         $(show_notebook_control)
@@ -875,7 +942,10 @@ dashboard_area("header", app_header)
 # ╠═40d24905-5708-4580-9ae5-71e1c1de01a9
 # ╠═12e75652-a3fd-11f1-9335-a986ee44237f
 # ╟─76de62b9-be88-4b96-b801-b40872dfa0be
+# ╠═c81d5f60-2a47-4e93-b6d1-5f39c284ae71
 # ╠═a2866674-5e4e-4738-b18e-90d122d2d161
+# ╠═d4a916c8-7b52-49f6-a8e3-1c06d5b74f29
+# ╠═e57c02d3-9f18-4a6b-b30c-6d2e81f45c93
 # ╠═7abbbe81-3d0b-4d94-a69f-32c66514687f
 # ╠═8392f056-369c-45fb-9c00-719172e82616
 # ╠═cdbda6eb-b5b9-4e9e-bac0-f334c19ae28e
@@ -923,4 +993,5 @@ dashboard_area("header", app_header)
 # ╠═6a3d1f28-04bc-4e7a-9c15-8b2f70d6ae41
 # ╠═a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
 # ╠═375349c2-33bb-45fb-b412-672c678b93b3
+# ╠═b3f27a51-6c84-4d19-9f52-8e1c47a0d6b2
 # ╠═0187c445-f7a0-4eae-b55d-2bd955df2c2c
