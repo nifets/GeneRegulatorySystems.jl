@@ -163,11 +163,18 @@ function infer_parents(network::Network)
         isnothing(parent) || (parents[node.name] = parent)
     end
 
+    shared = Set(
+        node.name
+        for node in network.nodes
+        if node.kind === :species && get(node.properties, :shared, false) === true
+    )
+
     adopted = Dict{Symbol, Set{Union{Symbol, Nothing}}}()
     for link in network.links
         link.kind in (:substrate, :product) || continue
         reaction, species = link.kind === :substrate ?
             (link.to, link.from) : (link.from, link.to)
+        species in shared && continue
         push!(
             get!(Set{Union{Symbol, Nothing}}, adopted, reaction),
             get(parents, species, nothing),
