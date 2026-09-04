@@ -283,16 +283,24 @@ function lod(catenation::Catenation{<:Series}; from, to)
 end
 
 function lod(trace::Trace{<:AbstractVector})
-    (; index, catenations) = trace
-    Trace(index, Dict(
-        kind => Dict(
-            id => lod(
+    (; records, catenations) = trace
+    result = Dict{Symbol, Dict{Int, Catenation{TrajectoryLOD}}}()
+
+    for (kind, group) in by_kind(catenations)
+        ids = collect(keys(group))
+        built = Vector{Catenation{TrajectoryLOD}}(undef, length(ids))
+
+        Threads.@threads for i in eachindex(ids)
+            catenation = group[ids[i]]
+            built[i] = lod(
                 catenation;
-                from=index[first(catenation.segments)].from,
-                to=index[last(catenation.segments)].to,
+                from=records[first(catenation.segments)].from,
+                to=records[last(catenation.segments)].to,
             )
-            for (id, catenation) in group
-        )
-        for (kind, group) in by_kind(catenations)
-    ))
+        end
+
+        result[kind] = Dict(zip(ids, built))
+    end
+
+    Trace(records, result)
 end

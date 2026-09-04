@@ -885,7 +885,7 @@ const DEFAULT_PHYSICS = (;
     handleDisconnected=false,
 )
 
-const DEFAULT_EDGE_LENGTHS = (; gene=300, strong=100, species=20)
+const DEFAULT_EDGE_LENGTHS = (; gene=400, strong=200, reaction=200, species=20)
 
 function continuous_physics(physics, edge_lengths)
     JS.js"""
@@ -906,7 +906,18 @@ function continuous_physics(physics, edge_lengths)
         };
         const lengths = $(edge_lengths);
         const edgeLength = edge => {
-            if (edge.source().isChild() || edge.target().isChild()) {
+            const source = edge.source();
+            const target = edge.target();
+            const reaction = source.hasClass("reaction") ? source :
+                target.hasClass("reaction") ? target : null;
+            if (
+                reaction &&
+                !reaction.isChild() &&
+                edge.data("view") === "gene"
+            ) {
+                return lengths.reaction;
+            }
+            if (source.isChild() || target.isChild()) {
                 return lengths.species;
             }
             const kind = edge.data("kind");
