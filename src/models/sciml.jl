@@ -248,12 +248,13 @@ const JUMP_PROBLEM_LOCK = ReentrantLock()
 JumpModel(
     system::ModelingToolkit.System,
     method::JumpProcesses.AbstractAggregatorAlgorithm;
+    rate_bounds = nothing,
     # Forwarded to the aggregation constructor; e.g. `bracket_data` for the
     # RSSA family (see `V1.promoter_bracket_data`).
     problem...,
 ) =
     lock(JUMP_PROBLEM_LOCK) do
-        JumpModel(problem = ModelingToolkit.JumpProblem(
+        jump_problem = ModelingToolkit.JumpProblem(
             system,
             [s => 0 for s in ModelingToolkit.unknowns(system)],
             (0.0, Inf);
@@ -266,8 +267,108 @@ JumpModel(
             # immutable. See `JumpState` and SciML issue #554.
             rng = Random.Xoshiro(),
             u0_eltype = Float64,
-        ))
+        )
+        rate_bounds === nothing || attach_rate_bounds!(jump_problem, rate_bounds)
+        JumpModel(problem = jump_problem)
     end
+
+function corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
+    @inbounds for (species, direction) in directions
+        if direction > 0
+            ulow_corner[species] = ulow[species]
+            uhigh_corner[species] = uhigh[species]
+        else
+            ulow_corner[species] = uhigh[species]
+            uhigh_corner[species] = ulow[species]
+        end
+    end
+    nothing
+end
+
+function bracket_bound(rate, directions, u)
+    ulow_corner = copy(u)
+    uhigh_corner = copy(u)
+    function (ulow, uhigh, p, t)
+        corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
+        (rate(ulow_corner, p, t), rate(uhigh_corner, p, t))
+    end
+end
+
+function lower_bound(rate, directions, u)
+    ulow_corner = copy(u)
+    uhigh_corner = copy(u)
+    function (ulow, uhigh, p, t)
+        corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
+        rate(ulow_corner, p, t)
+    end
+end
+
+function upper_bound(rate, directions, u)
+    ulow_corner = copy(u)
+    uhigh_corner = copy(u)
+    function (ulow, uhigh, p, t)
+        corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
+        rate(uhigh_corner, p, t)
+    end
+end
+
+"""
+    attach_rate_bounds!(problem::JumpProcesses.JumpProblem, directions)
+
+Install propensity bounds on the aggregation of an already-constructed
+`problem`, one entry of `directions` per `ConstantRateJump`, each a vector of
+`species_index => ±1` pairs giving the sign of the rate's monotonicity in that
+species (see `V1.propensity_directions`).
+
+`ModelingToolkit` assembles the `ConstantRateJump`s itself and offers no way to
+pass them `lrate`/`urate`, so the bounds are attached here instead. This is
+sound because aggregations only read their bound fields from `initialize!`
+onwards, which happens at integrator construction, long after this runs.
+"""
+function attach_rate_bounds!(problem::JumpProcesses.JumpProblem, directions)
+    rates = [jump.rate for jump in problem.constant_jumps]
+    length(rates) == length(directions) || error(
+        "got $(length(directions)) direction vectors for $(length(rates)) ConstantRateJumps"
+    )
+    attach_rate_bounds!(
+        problem.discrete_jump_aggregation, rates, directions, problem.prob.u0
+    )
+    problem
+end
+
+function attach_rate_bounds!(
+    aggregation::Union{
+        JumpProcesses.RSSAJumpAggregation,
+        JumpProcesses.RSSACRJumpAggregation
+    },
+    rates, directions, u
+)
+    Bracket = eltype(aggregation.brackets)
+    aggregation.brackets .= [
+        Bracket(bracket_bound(rate, dirs, u))
+        for (rate, dirs) in zip(rates, directions)
+    ]
+    aggregation
+end
+
+function attach_rate_bounds!(
+    aggregation::JumpProcesses.TauSplittingJumpAggregation, rates, directions, u
+)
+    Bound = eltype(aggregation.lrates)
+    aggregation.lrates .= [
+        Bound(lower_bound(rate, dirs, u))
+        for (rate, dirs) in zip(rates, directions)
+    ]
+    aggregation.urates .= [
+        Bound(upper_bound(rate, dirs, u))
+        for (rate, dirs) in zip(rates, directions)
+    ]
+    aggregation
+end
+
+attach_rate_bounds!(aggregation, rates, directions, u) = error(
+    "$(nameof(typeof(aggregation))) does not support propensity bounds"
+)
 
 system(f!::JumpModel) = f!.problem.prob.f.sys
 method(f!::JumpModel) = f!.problem.aggregator

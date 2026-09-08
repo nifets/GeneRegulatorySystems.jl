@@ -792,7 +792,11 @@ function regulation(
                             deactivation_rate(target),
                             [genes[target.name].active],
                             target.unique ? nothing : [genes[target.name].inactive],
-                            only_use_rate = true
+                            only_use_rate = true;
+                            metadata = [:propensity_directions => [
+                                (species_reference(slot.from; t, genes) => Int8(-1) for slot in target.activation.slots)...
+                                genes[target.name].active => Int8(1)
+                            ]]
                         ), :deactivation;
                             owner=target.name,
                             parameters=Dict(:rate => Symbol("$(target.name).deactivation")))
@@ -802,7 +806,12 @@ function regulation(
                             activation_rate(target),
                             target.unique ? nothing : [genes[target.name].inactive],
                             [genes[target.name].active],
-                            only_use_rate = true
+                            only_use_rate = true;
+                            metadata = [:propensity_directions => [
+                                (species_reference(slot.from; t, genes) => Int8(-1) for slot in target.repression.slots)...
+                                (target.unique ? genes[target.name].active => Int8(-1) :
+                                                 genes[target.name].inactive => Int8(1))
+                            ]]
                         ), :activation;
                             owner=target.name,
                             parameters=Dict(:rate => Symbol("$(target.name).activation")))
@@ -969,13 +978,12 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition)
             if haskey(species_index, s)
         ]
     end
-    propensity_bounds = DirectionalBounds{Float64}([propensity_directions(rx, species_index)
-        for rx in constant_reactions], length(unknowns))
+    rate_bounds = [propensity_directions(rx, species_index) for rx in constant_reactions]
 
     if algorithm in (RSSA, RSSACR)
         (;
             bracket_data = promoter_bracket_data(jump_system),
-            propensity_bounds
+            rate_bounds
         )
     elseif algorithm === TauSplitting
         jumptostoich_map = [
@@ -988,7 +996,7 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition)
             for rx in constant_reactions
         ]
         (;
-            propensity_bounds,
+            rate_bounds,
             jumptostoich_map
         )
     else

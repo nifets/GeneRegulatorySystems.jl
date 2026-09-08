@@ -945,8 +945,8 @@ dashboard_area("header", app_header)
 
 # ╔═╡ Cell order:
 # ╟─29eb1509-3cea-4c50-9d8e-24bcd8a54bbb
-# ╟─032084a8-991a-4eeb-a5e9-78110b2b7cbe
-# ╟─116c3c09-d5b1-4c86-8c08-c470df26099b
+# ╠═032084a8-991a-4eeb-a5e9-78110b2b7cbe
+# ╠═116c3c09-d5b1-4c86-8c08-c470df26099b
 # ╠═2b6e0f41-8d59-4033-a4e7-19f5b308620d
 # ╠═3c7f1052-9e6a-4144-b5f8-2a06c419731e
 # ╠═4d802163-af7b-4255-a6a9-3b17d52a842f
