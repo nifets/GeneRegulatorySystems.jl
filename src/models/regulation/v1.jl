@@ -593,16 +593,14 @@ end
 species_reference(name::Symbol; t, genes) =
     haskey(genes, name) ? genes[name].proteins : species_variable(name; t)
 
-# Catalyst.hill returns NaN if either both X and K are 0, or if X is 0 and
-# n < 0. Since X may become (and often initially is) 0, this restricts what both
-# K (which here is the activation/repression half-activation concentration) and
-# n may be specified as by the user. To allow both of these violations in the
-# limit case, we define a slightly more flexible hill function.
-safe_div(K::Real, X::Real) = iszero(K) ? zero(K / X) : K / X
-# Allow hill2 to also work with symbolic K
-@register_symbolic safe_div(K, X)
-
-hill2(X, v, K, n) = v / (1.0 + safe_div(K, X) ^ n)
+function hill2(X, v, K, n)
+    m = abs(n)
+    a = X^m
+    b = K^m
+    total = a + b
+    ifelse(total > 0,
+        ifelse(n >= 0, v * a / total, v * b / total), ifelse(n >= 0, v, zero(v)))
+end
 
 make_parameter(name::Symbol) = ModelingToolkit.toparam(Symbolics.variable(name))
 make_parameter(name::Symbol, default::Float64) = Symbolics.setmetadata(make_parameter(name), Symbolics.VariableDefaultValue, default)
