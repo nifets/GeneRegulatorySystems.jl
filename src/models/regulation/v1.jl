@@ -937,7 +937,7 @@ function promoter_bracket_data(system)
 end
 
 function aggregator_options(algorithm, reaction_system, jump_system, definition)
-    algorithm in (RSSA, RSSACR, TauSplitting) || return (;)
+    algorithm in (RSSA, RSSACR, TauSplitting) || return (nothing, (;))
     all(definition.genes) do gene
         all(slot -> slot.k <= 0.0, gene.activation.slots) &&
             all(slot -> slot.k <= 0.0, gene.repression.slots)
@@ -976,30 +976,10 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition)
             if haskey(species_index, s)
         ]
     end
-    rate_bounds = [propensity_directions(rx, species_index) for rx in constant_reactions]
+    directions = [propensity_directions(rx, species_index) for rx in constant_reactions]
 
-    if algorithm in (RSSA, RSSACR)
-        (;
-            bracket_data = promoter_bracket_data(jump_system),
-            rate_bounds
-        )
-    elseif algorithm === TauSplitting
-        jumptostoich_map = [
-            Pair{Int, Int}[
-                species_index[species] => Int(stoch)
-                for (raw_species, stoch) in rx.netstoich
-                for species in (ModelingToolkit.value(raw_species),)
-                if haskey(species_index, species)
-            ]
-            for rx in constant_reactions
-        ]
-        (;
-            rate_bounds,
-            jumptostoich_map
-        )
-    else
-        (;)
-    end
+    algorithm in (RSSA, RSSACR) || return directions, (;)
+    directions, (; bracket_data = promoter_bracket_data(jump_system))
 end
 
 """
@@ -1096,15 +1076,14 @@ function build(definition::Definition; method::Symbol = :default)
     jump_system = complete(jump_model(reaction_system))
     algorithm = pick_method(reaction_system; method)
 
+    directions, options = aggregator_options(
+        algorithm, reaction_system, jump_system, definition)
+
     Models.Wrapped(;
         definition,
         model = Models.Wrapped(
             definition = reaction_system,
-            model = SciML.JumpModel(
-                jump_system,
-                algorithm();
-                aggregator_options(algorithm, reaction_system, jump_system, definition)...,
-            ),
+            model = SciML.JumpModel(jump_system, algorithm(), directions; options...),
         ),
     )
 end

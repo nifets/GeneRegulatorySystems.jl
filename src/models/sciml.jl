@@ -4,6 +4,10 @@ import ..Models: Models, Model, FlatState
 import Catalyst
 import JumpProcesses
 using ModelingToolkit: ModelingToolkit, SymbolicIndexingInterface
+const MTKB = ModelingToolkit.ModelingToolkitBase
+import JumpProcesses.DiffEqBase
+const ArrayPartition = MTKB.ArrayPartition
+import JumpProcesses.SciMLBase
 
 import Random
 using Logging: LogLevel, @logmsg
@@ -241,36 +245,140 @@ by `each_event` for output in sparse long format.
     problem::JumpProcesses.JumpProblem
 end
 
+function discrete_problem(system, op, tspan; kwargs...)
+    inner, u0, p = MTKB.process_SciMLProblem(
+        MTKB.EmptySciMLFunction{true}, system, op;
+        t = tspan[1], check_length = false, build_initializeprob = false, kwargs...
+    )
+    SciMLBase.DiscreteProblem(
+        SciMLBase.DiscreteFunction{true, true}(
+            DiffEqBase.DISCRETE_INPLACE_DEFAULT;
+            sys = system,
+            observed = MTKB.ObservedFunctionCache(system),
+            initialization_data = get(inner.kwargs, :initialization_data, nothing)
+        ),
+        u0, tspan, p; kwargs...
+    )
+end
+
+function jump_problem(system, aggregator, source;
+    op = [s => 0 for s in ModelingToolkit.unknowns(system)],
+    tspan = (0.0, Inf),
+    # `JumpProcesses` defaults to `(false, true)` for a `DiscreteProblem`;
+    # `ModelingToolkit.JumpProblem` passed `(true, true)`, which `each_event`
+    # and the trajectory sinks rely on.
+    save_positions = (true, true),
+    options...)
+    problem = discrete_problem(system, op, tspan; u0_eltype=Float64)
+    ids = Dict(ModelingToolkit.value(u) => i
+        for (i, u) in enumerate(ModelingToolkit.unknowns(system)))
+    equations = MTKB.jumps(system)
+    majs = Vector{JumpProcesses.MassActionJump}(
+        filter(j -> j isa JumpProcesses.MassActionJump, equations))
+    crjs = Vector{JumpProcesses.ConstantRateJump}(
+        filter(j -> j isa JumpProcesses.ConstantRateJump, equations))
+    graphs = dependency_graphs(system, aggregator, ArrayPartition(majs, crjs))
+    stoichiometry = net_stoichiometry(aggregator, ids, crjs)
+
+    JumpProcesses.JumpProblem(
+        problem, aggregator,
+        JumpProcesses.JumpSet(
+            massaction_jumps = isempty(majs) ? nothing : MTKB.assemble_maj(
+                majs, ids,
+                MTKB.JumpSysMajParamMapper(system, problem.p;
+                    jseqs = equations, rateconsttype = Float64)
+            ),
+            constant_jumps = constant_rate_jumps(source, problem, system, ids, crjs)
+        );
+        graphs..., stoichiometry...,
+        callback = MTKB.process_events(system;
+            op = MTKB.operating_point_preprocess(system, op),
+            reset_jumps = true, tspan
+        ),
+        scale_rates = false, nocopy = true, save_positions,
+        # Independent, deterministically seeded RNG (instead of the default
+        # TaskLocalRNG): `JumpState` reseeds this before initializing any
+        # integrator and relies on the deepcopy producing independent
+        # instances, so we can treat the `JumpProblem` as effectively
+        # immutable. See `JumpState` and SciML issue #554.
+        rng = Random.Xoshiro(),
+        options...
+    )
+end
+
+function dependency_graphs(system, aggregator, equations)
+    JumpProcesses.needs_vartojumps_map(aggregator) ||
+        JumpProcesses.needs_depgraph(aggregator) ||
+        aggregator isa JumpProcesses.NullAggregator ||
+        return (;)
+    forward = MTKB.asgraph(system; eqs = equations)
+    backward = MTKB.variable_dependencies(system; eqs = equations)
+    (;
+        vartojumps_map = forward.badjlist,
+        jumptovars_map = backward.badjlist,
+        dep_graph = JumpProcesses.needs_depgraph(aggregator) ?
+            MTKB.eqeq_dependencies(forward, backward).fadjlist : nothing,
+    )
+end
+
+net_stoichiometry(::JumpProcesses.AbstractAggregatorAlgorithm, ids, equations) = (;)
+
+net_stoichiometry(::JumpProcesses.TauSplitting, ids, equations) = (;
+    jumptostoich_map = [
+        Pair{Int, Int}[
+            ids[ModelingToolkit.value(affect.lhs)] => stoichiometry(affect)
+            for affect in jump.affect!
+        ]
+        for jump in equations
+    ]
+)
+
+function stoichiometry(affect::ModelingToolkit.Equation)
+    change = ModelingToolkit.value(ModelingToolkit.Symbolics.expand(
+        ModelingToolkit.Symbolics.substitute(
+            ModelingToolkit.value(affect.rhs),
+            Dict(MTKB.Pre(ModelingToolkit.value(affect.lhs)) => 0)
+        )
+    ))
+    change isa Number || error(
+        "affect `$(affect)` does not change its species by a constant amount"
+    )
+    Int(change)
+end
+
+constant_rate_jumps(::Nothing, problem, system, ids, equations) =
+    [MTKB.assemble_crj(system, j, ids) for j in equations]
+
+function constant_rate_jumps(directions::AbstractVector, problem, system, ids, equations)
+    jumps = constant_rate_jumps(nothing, problem, system, ids, equations)
+    length(directions) == length(jumps) || error(
+        "got $(length(directions)) direction vectors for $(length(jumps)) ConstantRateJumps"
+    )
+    [
+        JumpProcesses.ConstantRateJump(c.rate, c.affect!;
+            bounds = bracket_bound(c.rate, dirs, problem.u0),
+            lrate = lower_bound(c.rate, dirs, problem.u0),
+            urate = upper_bound(c.rate, dirs, problem.u0)
+        ) for (c, dirs) in zip(jumps, directions)
+    ]
+end
+
 # SymbolicUtils hash consing is thread unsafe
 # https://github.com/SciML/ModelingToolkit.jl/issues/3315
 const JUMP_PROBLEM_LOCK = ReentrantLock()
 
 JumpModel(
     system::ModelingToolkit.System,
-    method::JumpProcesses.AbstractAggregatorAlgorithm;
-    rate_bounds = nothing,
+    method::JumpProcesses.AbstractAggregatorAlgorithm,
+    # Dispatches `constant_rate_jumps`; `nothing` builds unbounded jumps from
+    # the symbolic system, a vector of propensity directions adds rate bounds.
+    source = nothing;
     # Forwarded to the aggregation constructor; e.g. `bracket_data` for the
     # RSSA family (see `V1.promoter_bracket_data`).
     problem...,
-) =
-    lock(JUMP_PROBLEM_LOCK) do
-        jump_problem = ModelingToolkit.JumpProblem(
-            system,
-            [s => 0 for s in ModelingToolkit.unknowns(system)],
-            (0.0, Inf);
-            aggregator = method,
-            problem...,
-            # Independent, deterministically seeded RNG (instead of the default
-            # TaskLocalRNG): `JumpState` reseeds this before initializing any
-            # integrator and relies on the deepcopy producing independent
-            # instances, so we can treat the `JumpProblem` as effectively
-            # immutable. See `JumpState` and SciML issue #554.
-            rng = Random.Xoshiro(),
-            u0_eltype = Float64,
-        )
-        rate_bounds === nothing || attach_rate_bounds!(jump_problem, rate_bounds)
-        JumpModel(problem = jump_problem)
-    end
+) = lock(JUMP_PROBLEM_LOCK) do
+    JumpModel(problem = jump_problem(system, method, source; problem...))
+end
 
 function corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
     @inbounds for (species, direction) in directions
@@ -290,7 +398,10 @@ function bracket_bound(rate, directions, u)
     uhigh_corner = copy(u)
     function (ulow, uhigh, p, t)
         corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
-        (rate(ulow_corner, p, t), rate(uhigh_corner, p, t))
+        JumpProcesses.RateBounds(
+            lrate = rate(ulow_corner, p, t),
+            urate = rate(uhigh_corner, p, t)
+        )
     end
 end
 
@@ -299,7 +410,9 @@ function lower_bound(rate, directions, u)
     uhigh_corner = copy(u)
     function (ulow, uhigh, p, t)
         corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
-        rate(ulow_corner, p, t)
+        JumpProcesses.RateBounds(
+            lrate = rate(ulow_corner, p, t)
+        )
     end
 end
 
@@ -308,67 +421,11 @@ function upper_bound(rate, directions, u)
     uhigh_corner = copy(u)
     function (ulow, uhigh, p, t)
         corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
-        rate(uhigh_corner, p, t)
+        JumpProcesses.RateBounds(
+            urate = rate(uhigh_corner, p, t)
+        )
     end
 end
-
-"""
-    attach_rate_bounds!(problem::JumpProcesses.JumpProblem, directions)
-
-Install propensity bounds on the aggregation of an already-constructed
-`problem`, one entry of `directions` per `ConstantRateJump`, each a vector of
-`species_index => ±1` pairs giving the sign of the rate's monotonicity in that
-species (see `V1.propensity_directions`).
-
-`ModelingToolkit` assembles the `ConstantRateJump`s itself and offers no way to
-pass them `lrate`/`urate`, so the bounds are attached here instead. This is
-sound because aggregations only read their bound fields from `initialize!`
-onwards, which happens at integrator construction, long after this runs.
-"""
-function attach_rate_bounds!(problem::JumpProcesses.JumpProblem, directions)
-    rates = [jump.rate for jump in problem.constant_jumps]
-    length(rates) == length(directions) || error(
-        "got $(length(directions)) direction vectors for $(length(rates)) ConstantRateJumps"
-    )
-    attach_rate_bounds!(
-        problem.discrete_jump_aggregation, rates, directions, problem.prob.u0
-    )
-    problem
-end
-
-function attach_rate_bounds!(
-    aggregation::Union{
-        JumpProcesses.RSSAJumpAggregation,
-        JumpProcesses.RSSACRJumpAggregation
-    },
-    rates, directions, u
-)
-    Bracket = eltype(aggregation.brackets)
-    aggregation.brackets .= [
-        Bracket(bracket_bound(rate, dirs, u))
-        for (rate, dirs) in zip(rates, directions)
-    ]
-    aggregation
-end
-
-function attach_rate_bounds!(
-    aggregation::JumpProcesses.TauSplittingJumpAggregation, rates, directions, u
-)
-    Bound = eltype(aggregation.lrates)
-    aggregation.lrates .= [
-        Bound(lower_bound(rate, dirs, u))
-        for (rate, dirs) in zip(rates, directions)
-    ]
-    aggregation.urates .= [
-        Bound(upper_bound(rate, dirs, u))
-        for (rate, dirs) in zip(rates, directions)
-    ]
-    aggregation
-end
-
-attach_rate_bounds!(aggregation, rates, directions, u) = error(
-    "$(nameof(typeof(aggregation))) does not support propensity bounds"
-)
 
 system(f!::JumpModel) = f!.problem.prob.f.sys
 method(f!::JumpModel) = f!.problem.aggregator
