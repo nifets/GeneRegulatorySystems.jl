@@ -102,15 +102,25 @@ $(RUNTIME)
 </span>
 """)
 
-picker(shared::Shared, options; size=4) = @htl("""
-<span>
+picker(shared::Shared, options; size=3) = @htl("""
+<span style="display: inline-block;">
 $(RUNTIME)
-<select multiple size=$(size) title="Cmd+Click or Ctrl+Click to select multiple items.">
+<input type="search" size="1" style="display: block; width: 100%; box-sizing: border-box; margin-bottom: 2px; font-family: inherit;">
+<select multiple size=$(size) style="display: block; width: 100%; box-sizing: border-box;" title="Cmd+Click or Ctrl+Click to select multiple items.">
     $((@htl("<option value=$(option)>$(option)</option>") for option in options))
 </select>
 <script>
     const select = currentScript.parentElement.querySelector("select")
+    const search = currentScript.parentElement.querySelector("input")
     const state = window.PageState.connect($(shared.key), "picker")
+
+    search.addEventListener("input", () => {
+        const query = search.value.trim().toLowerCase()
+        for (const option of select.options)
+            option.hidden = query !== "" &&
+                !option.value.toLowerCase().includes(query) &&
+                !option.selected
+    })
 
     select.addEventListener("input", () =>
         state.set([...select.selectedOptions].map(option => option.value))

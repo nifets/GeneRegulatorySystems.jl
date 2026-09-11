@@ -67,7 +67,7 @@ project(::Val{:direct}, X, components) = X
 
 function project(::Val{:pca}, X, components)
     Z = standardise(X)
-    predict(fit(PCA, Z; maxoutdim=components), Z)
+    predict(fit(PCA, Z; maxoutdim=components, method=:svd), Z)
 end
 
 project(::Val{:umap}, X, components) =
@@ -122,6 +122,16 @@ function palette(::Val{:time}, snapshot, _group_colors, _temperature)
     ]
 end
 
+Projection(::Nothing, components) = Projection(
+    zeros(Float64, max(components, 2), 0),
+    @NamedTuple{catenation::Int, t::Float64}[],
+    RGBf[],
+    Dict{Int, String}(),
+    Dict{Int, String}(),
+    Symbol(""),
+    String[],
+)
+
 function project(
     snapshot;
     components=2,
@@ -129,6 +139,7 @@ function project(
     temperature=nothing,
     coloring=:genes,
 )
+    size(snapshot.X, 2) < 3 && return Projection(nothing, components)
     coloring = Symbol(coloring)
     colors = palette(Val(coloring), snapshot, group_colors, temperature)
     swatches = Dict(
@@ -144,7 +155,12 @@ function project(
         isnothing(declared) || (colors[i] = declared)
     end
     chosen = method(snapshot.X, components)
-    coords = project(chosen, snapshot.X, components)
+    coords = try
+        project(chosen, snapshot.X, components)
+    catch error
+        @warn "phase projection failed" error method=unval(chosen) size=size(snapshot.X)
+        return Projection(nothing, components)
+    end
     Projection(
         coords,
         snapshot.states,

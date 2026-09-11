@@ -20,7 +20,18 @@ end
     nodes::Vector{Node} = Node[]
     links::Vector{Link} = Link[]
     groups::Vector{Symbol} = Symbol[]
+    genes::Set{Symbol} = Set(groups)
     parameters::Dict{String, Dict{Symbol, Float64}} = Dict{String, Dict{Symbol, Float64}}()
+    incidence::Dict{Symbol, Vector{Link}} = Dict{Symbol, Vector{Link}}()
+end
+
+function incidence(links)
+    index = Dict{Symbol, Vector{Link}}()
+    for link in links
+        link.kind == :substrate && push!(get!(Vector{Link}, index, link.to), link)
+        link.kind == :product && push!(get!(Vector{Link}, index, link.from), link)
+    end
+    index
 end
 
 paths(network::Network) = sort!(collect(keys(network.parameters)))
@@ -149,9 +160,41 @@ function Network(schedule!::Models.Scheduling.Schedule)
     merge_networks(values(networks)...)
 end
 
-function gene_of(species::Symbol, groups)
-    index = findfirst(gene -> startswith(String(species), string(gene, ".")), groups)
-    isnothing(index) ? nothing : groups[index]
+provenance(::Models.Description) = String[]
+provenance(label::Models.Label) = [label.label]
+provenance(descriptions::Models.Descriptions) =
+    mapreduce(provenance, vcat, descriptions.descriptions; init=String[])
+provenance(description::Models.Provenance) =
+    vcat(provenance(description.source), provenance(description.description))
+
+function provenance(schedule!::Models.Scheduling.Schedule)
+    lines = Dict{String, Vector{String}}()
+    function collect_provenance!(primitive!, x, Δt; kwargs...)
+        isfinite(Δt) && Δt > 0 || return nothing
+        get!(lines, primitive!.path) do
+            provenance(Models.describe(primitive!))
+        end
+        nothing
+    end
+    schedule!(
+        Models.FlatState();
+        dryrun=collect_provenance!,
+        parallel=false
+    )
+    lines
+end
+
+gene_of(species::Symbol, groups) = gene_of(species, Set(groups))
+
+function gene_of(species::Symbol, groups::AbstractSet)
+    name = String(species)
+    position = findfirst('.', name)
+    while !isnothing(position)
+        candidate = Symbol(name[1:prevind(name, position)])
+        candidate in groups && return candidate
+        position = findnext('.', name, nextind(name, position))
+    end
+    nothing
 end
 
 function infer_parents(network::Network)
@@ -159,7 +202,7 @@ function infer_parents(network::Network)
     for node in network.nodes
         node.kind === :species || continue
         parent = isnothing(node.parent) ?
-            gene_of(node.name, network.groups) : node.parent
+            gene_of(node.name, network.genes) : node.parent
         isnothing(parent) || (parents[node.name] = parent)
     end
 
@@ -198,16 +241,35 @@ function infer_parents(network::Network)
         links=network.links,
         groups=network.groups,
         parameters=network.parameters,
+        incidence=network.incidence
     )
+end
+
+function merge_links(links)
+    merged = Dict{Tuple{Symbol, Symbol, Symbol}, Link}()
+    for link in links
+        key = (link.kind, link.from, link.to)
+        if haskey(merged, key)
+            prev = merged[key]
+            merged[key] = Link(
+                kind=link.kind, from=link.from, to=link.to,
+                scope=prev.scope === link.scope ? link.scope : :all,
+                properties=merge(prev.properties, link.properties),
+                present_in=union(prev.present_in, link.present_in)
+            )
+        else
+            merged[key] = link
+        end
+    end
+    collect(values(merged))
 end
 
 function merge_networks(networks::Network...)
     isempty(networks) && return Network()
     nodes = Dict{Tuple{Symbol, Symbol}, Node}()
-    links = Dict{Tuple{Symbol, Symbol, Symbol}, Link}()
 
     groups = unique(Symbol[group for n in networks for group in n.groups])
-
+    links = merge_links(link for network in networks for link in network.links)
     for network in networks
         for node in network.nodes
             key = (node.kind, node.name)
@@ -224,26 +286,13 @@ function merge_networks(networks::Network...)
                 nodes[key] = node
             end
         end
-        for link in network.links
-            key = (link.kind, link.from, link.to)
-            if haskey(links, key)
-                prev = links[key]
-                links[key] = Link(
-                    kind=link.kind, from=link.from, to=link.to,
-                    scope=prev.scope === link.scope ? link.scope : :all,
-                    properties=merge(prev.properties, link.properties),
-                    present_in=union(prev.present_in, link.present_in)
-                )
-            else
-                links[key] = link
-            end
-        end
     end
     infer_parents(Network(
         nodes=collect(values(nodes)),
-        links=collect(values(links)),
+        links=links,
         groups=groups,
-        parameters=merge((network.parameters for network in networks)...)
+        parameters=merge((network.parameters for network in networks)...),
+        incidence=incidence(links)
     ))
 end
 
@@ -263,11 +312,13 @@ function path_view(network::Network, path::String)
         Dict(path => network.parameters[path]) :
         Dict{String, Dict{Symbol, Float64}}()
 
+    links = filter(link -> present_at(link, path), network.links)
     Network(
         nodes=filter(node -> present_at(node, path), network.nodes),
-        links=filter(link -> present_at(link, path), network.links),
+        links=links,
         groups=network.groups,
         parameters=parameters,
+        incidence=incidence(links),
     )
 end
 
@@ -334,7 +385,7 @@ function gene_view(network::Network; include_shared=false)
             ))
         end
     end
-    links = merge_networks(Network(links=links)).links
+    links = merge_links(links)
 
     links = [link for link in links if link.from in visible && link.to in visible]
     Network(nodes=nodes, links=links, groups=network.groups, parameters=network.parameters)
@@ -412,7 +463,7 @@ node_tooltip(::Val{:gene}, node, network) = "gene $(node.name)"
 
 function node_tooltip(::Val{:reaction}, node, network)
     function reaction_side(network, reaction, kind)
-        links = filter(network.links) do link
+        links = filter(get(network.incidence, reaction.name, network.links)) do link
             link.kind === kind &&
                 (kind === :substrate ? link.to : link.from) === reaction.name
         end
@@ -452,16 +503,19 @@ link_tooltip(::Val{:product}, link, network) = nothing
 
 function link_tooltip(::Val, link, network)
     species_level = link.kind in (:promotes, :inhibits)
-    from = species_level ? link.from : something(gene_of(link.from, network.groups), link.from)
-    to = species_level ? link.to : something(gene_of(link.to, network.groups), link.to)
+    from = species_level ? link.from : something(gene_of(link.from, network.genes), link.from)
+    to = species_level ? link.to : something(gene_of(link.to, network.genes), link.to)
     heading = "$(link.kind): $from → $to"
     parameters = ("  $line" for line in parameter_lines(link, network))
     join((heading, parameters...), "\n")
 end
 
-function node_variants(node::Node, network::Network)
+path_views(network::Network) =
+    Dict(path => path_view(network, path) for path in keys(network.parameters))
+
+function node_variants(node::Node, network::Network, views = path_views(network))
     Dict(path => begin
-        view = path_view(network, path)
+        view = views[path]
         (;
             label=node_label(node),
             tooltip=node_tooltip(node, view),
@@ -470,9 +524,9 @@ function node_variants(node::Node, network::Network)
     end for path in keys(network.parameters) if present_at(node, path))
 end
 
-function link_variants(link::Link, network::Network)
+function link_variants(link::Link, network::Network, views = path_views(network))
     Dict(path => begin
-        view = path_view(network, path)
+        view = views[path]
         parameters = parameter_lines(link, view)
         (;
             label=isempty(parameters) ? link_label(link) : join(parameters, " "),

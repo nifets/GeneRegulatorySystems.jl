@@ -65,6 +65,28 @@ md"""
 ### Run simulation
 """
 
+# ╔═╡ a1d5e8f2-4b73-4c96-8e05-71fc32a9b6d8
+function fraction_reporter(emit, total; interval = 0.1)
+    advanced = Dict{String, Float64}()
+    guard = ReentrantLock()
+    last = Ref(0.0)
+    (stage; done = nothing, path = nothing, _...) -> begin
+        done === nothing && return
+        fraction = lock(guard) do
+            advanced[something(path, "")] = done
+            time() - last[] < interval && return nothing
+            last[] = time()
+            min(sum(values(advanced)) / max(total, eps()), 1.0)
+        end
+        fraction === nothing || emit(fraction)
+    end
+end
+
+# ╔═╡ 525c8855-9758-4d61-a8da-a616396be848
+md"""
+### Trajectory View
+"""
+
 # ╔═╡ 76d9a00b-10fa-4248-b460-6c5abb2424dd
 md"""
 ### Phase space
@@ -100,24 +122,33 @@ dark_mode_probe = @bind dark_mode @htl("""
 # ╔═╡ 6a3d1f28-04bc-4e7a-9c15-8b2f70d6ae41
 hide_notebook_styles = @htl("""
 <style id="grs-hide-notebook">
-    body:not(:has(.notebook-toggle input:checked)) header#pluto-nav,
-    body:not(:has(.notebook-toggle input:checked)) #helpbox-wrapper,
-    body:not(:has(.notebook-toggle input:checked)) footer,
-    body:not(:has(.notebook-toggle input:checked)) pluto-editor > main > preamble {
-        display: none !important;
+    body:not(:has(.notebook-toggle input:checked)) {
+        & header#pluto-nav,
+        & #helpbox-wrapper,
+        & footer,
+        & pluto-editor > main > preamble {
+            display: none !important;
+        }
+
+        & pluto-cell:has(.dashboard) {
+            & > pluto-shoulder,
+            & > button.add_cell,
+            & > pluto-trafficlight,
+            & > pluto-input,
+            & > pluto-runarea {
+                display: none !important;
+            }
+        }
     }
 
-    body:has(.dashboard):not(:has(.notebook-toggle input:checked))
-        pluto-cell:not(:has(.dashboard)):not(:has(.grs-splash)) {
-        display: none !important;
-    }
+    body:has(.dashboard):not(:has(.notebook-toggle input:checked)) {
+        & pluto-cell:not(:has(.dashboard)):not(:has(.grs-splash)):not(:has(pluto-logs-container)) {
+            display: none !important;
+        }
 
-    body:not(:has(.notebook-toggle input:checked)) pluto-cell:has(.dashboard) > pluto-shoulder,
-    body:not(:has(.notebook-toggle input:checked)) pluto-cell:has(.dashboard) > button.add_cell,
-    body:not(:has(.notebook-toggle input:checked)) pluto-cell:has(.dashboard) > pluto-trafficlight,
-    body:not(:has(.notebook-toggle input:checked)) pluto-cell:has(.dashboard) > pluto-input,
-    body:not(:has(.notebook-toggle input:checked)) pluto-cell:has(.dashboard) > pluto-runarea {
-        display: none !important;
+        & pluto-cell:has(pluto-logs-container) > *:not(pluto-logs-container) {
+            display: none;
+        }
     }
 </style>
 """)
@@ -125,35 +156,93 @@ hide_notebook_styles = @htl("""
 # ╔═╡ 375349c2-33bb-45fb-b412-672c678b93b3
 dashboard_styles = @htl("""
 <style id="grs-dashboard-styles">
-    body:not(:has(.notebook-toggle input:checked)) pluto-notebook {
-        display: grid;
-        grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr);
-        grid-template-areas:
-            "header header"
-            "left network"
-            "left trajectory";
-        grid-template-rows: auto auto 1fr;
-        align-items: start;
-        gap: 1rem;
-        max-width: none;
-        width: 100%;
-        margin: 0;
-        padding: 0 1.5rem 2rem;
-        box-sizing: border-box;
-    }
+    body:not(:has(.notebook-toggle input:checked)) {
+        & pluto-notebook {
+            display: grid;
+            grid-template-columns:
+                minmax(160px, 0.75fr) minmax(0, 0.25fr) minmax(0, 2fr);
+            grid-template-areas:
+                "header          header   header"
+                "schedule-header progress network"
+                "left            left     network"
+                "left            left     trajectory";
+            grid-template-rows: auto auto auto 1fr;
+            align-items: start;
+            gap: 1rem;
+            max-width: none;
+            width: 100%;
+            margin: 0;
+            padding: 0 1.5rem 2rem;
+            box-sizing: border-box;
+        }
 
-    body:not(:has(.notebook-toggle input:checked)) pluto-editor > main {
-        max-width: none;
-        width: 100%;
-        margin: 0;
-        padding: 0;
-        align-self: stretch;
+        & pluto-editor > main {
+            max-width: none;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            align-self: stretch;
+        }
+
+        & pluto-cell:has(.dashboard) {
+            margin: 0;
+            min-height: 0;
+            min-width: 0;
+        }
     }
 
     @media (max-width: 900px) {
         body:not(:has(.notebook-toggle input:checked)) pluto-notebook {
             grid-template-columns: minmax(0, 1fr);
-            grid-template-areas: "header" "network" "trajectory" "left";
+            grid-template-areas:
+                "header" "schedule-header" "progress"
+                "network" "trajectory" "left";
+        }
+    }
+
+    pluto-cell:has(.area-header) { grid-area: header; }
+    pluto-cell:has(.area-left) { grid-area: left; }
+    pluto-cell:has(.area-schedule-header) { grid-area: schedule-header; }
+    pluto-cell:has(.area-network) { grid-area: network; }
+    pluto-cell:has(.area-trajectory) { grid-area: trajectory; }
+
+    pluto-cell:has(pluto-logs-container) {
+        grid-area: progress;
+        padding: 0;
+        margin-top: 0;
+        min-height: 0;
+
+        & > pluto-output {
+            padding: 0 10px;
+        }
+
+        & pluto-logs-container:not(:empty) {
+            background: none;
+            padding: 0;
+            margin: 0 1.3rem 0 0;
+        }
+
+        & pluto-log-dot-positioner {
+            background: none;
+            margin: 0;
+        }
+
+        & pluto-log-dot-positioner:not(.Progress) {
+            display: none;
+        }
+
+        & pluto-log-dot {
+            padding: 0;
+        }
+
+        & pluto-log-icon {
+            display: none;
+        }
+
+        & pluto-progress-bar-container {
+            flex: 1;
+            outline: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+            outline-offset: -1px;
         }
     }
 
@@ -164,16 +253,6 @@ dashboard_styles = @htl("""
         font-family: Montserrat, sans-serif;
     }
 
-    body:not(:has(.notebook-toggle input:checked)) pluto-cell:has(.dashboard) {
-        margin: 0;
-        min-width: 0;
-    }
-
-    pluto-cell:has(.area-header) { grid-area: header; }
-    pluto-cell:has(.area-left) { grid-area: left; }
-    pluto-cell:has(.area-network) { grid-area: network; }
-    pluto-cell:has(.area-trajectory) { grid-area: trajectory; }
-     
     .dashboard-option {
         display: flex;
         align-items: center;
@@ -181,27 +260,59 @@ dashboard_styles = @htl("""
         font-family: Montserrat, sans-serif;
         font-size: 0.8rem;
         font-weight: 300;
+
+        & select,
+        & input,
+        & option {
+            font-family: Montserrat, sans-serif;
+        }
+
+        & select,
+        & input {
+            font-size: 0.7rem;
+        }
+
     }
-    .dashboard-option select,
-    .dashboard-option option {
-        font-family: Montserrat, sans-serif;
+
+    .area-schedule-header .dashboard-header {
+        flex-wrap: nowrap;
     }
-    .dashboard-option select {
-        font-size: 0.7rem;
+
+    .area-schedule-header .dashboard-option select {
+        min-width: 0;
     }
+
+
     .dashboard-header {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 1rem;
     }
+
     .dashboard-header.stacked {
         align-items: flex-start;
     }
+
     .dashboard-option.stacked {
         flex-direction: column;
         align-items: flex-start;
     }
+
+    .dashboard-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+
+    .network-provenance {
+        margin-left: auto;
+        text-align: right;
+        font-size: 0.7rem;
+        opacity: 0.6;
+        line-height: 1.3;
+    }
+
     .panel {
         box-sizing: border-box;
         width: 100%;
@@ -210,11 +321,16 @@ dashboard_styles = @htl("""
         clip-path: inset(0 round 6px);
         border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
         border-radius: 6px;
+
+        & > * {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+        }
     }
-    .panel > * {
-        width: 100% !important;
-        max-width: 100% !important;
-    }
+
+
+
     .schedule-panel {
         display: flex;
         flex-direction: column;
@@ -222,6 +338,7 @@ dashboard_styles = @htl("""
         min-height: 0;
         gap: 0.5rem;
     }
+
     .schedule-error {
         max-height: 4rem;
         overflow: auto;
@@ -233,11 +350,13 @@ dashboard_styles = @htl("""
         font-size: 0.7rem;
         white-space: pre-wrap;
     }
+
     .schedule-error:empty {
         display: none;
     }
 </style>
 """)
+
 
 # ╔═╡ b3f27a51-6c84-4d19-9f52-8e1c47a0d6b2
 reload_control = @bind reload_count @htl("""
@@ -280,6 +399,8 @@ begin
 
     splash_screen = @htl("""
 <div class="grs-splash">
+    <button class="grs-splash-dismiss" type="button" title="dismiss"
+            onclick="document.body.classList.add('grs-ready')">&times;</button>
     <div class="grs-splash-content">
         <div class="grs-splash-title">Gene Regulatory Systems</div>
         <div class="grs-splash-logo">
@@ -344,6 +465,22 @@ begin
         background: var(--main-bg-color);
     }
 
+    .grs-splash-dismiss {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        border: none;
+        background: transparent;
+        color: inherit;
+        font-size: 1.25rem;
+        opacity: 0.4;
+        cursor: pointer;
+    }
+
+    .grs-splash-dismiss:hover {
+        opacity: 1;
+    }
+
     .grs-splash-content {
         display: grid;
         justify-items: center;
@@ -394,7 +531,7 @@ begin
         text-align: left;
         animation: grs-dots 2s steps(1, end) infinite;
     }
-    
+
     @keyframes grs-dots {
         0%   { content: "."; }
         27%  { content: ".."; }
@@ -412,21 +549,22 @@ begin
     reload_count
 
     using Revise
-    
+
     using GeneRegulatorySystems
     const GRS = GeneRegulatorySystems
     const Vis = GRS.Visualisation
-    
+
     using CytoscapeJS
     using PlutoUI
     const Layout = PlutoUI.ExperimentalLayout
     import JSON
     import Colors
-    
+    import ProgressLogging
+
     using Bonito
     using WGLMakie
     WGLMakie.activate!()
-    
+
     Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "JSONEditor.jl"))
     Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "pagestate.jl"))
     Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "trajectories", "trajectories.jl"))
@@ -435,9 +573,11 @@ begin
 end;
 
 # ╔═╡ 032084a8-991a-4eeb-a5e9-78110b2b7cbe
-dashboard_panel(child) = isnothing(child) ? nothing : Layout.DOMElement(
+dashboard_panel(child; height=nothing) = isnothing(child) ? nothing : Layout.DOMElement(
         tag="div",
-        attributes=Dict("class" => "panel"),
+        attributes=isnothing(height) ?
+            Dict("class" => "panel") :
+            Dict("class" => "panel", "style" => "height: $(height)px;"),
         children=[child],
     )
 
@@ -511,11 +651,14 @@ schedule_header = @htl("""
     $(schedule_control)
 </label>
 <label class="dashboard-option">
-    <span>simulate: </span>
+    <span>simulate:</span>
     $(@bind run_simulation PlutoUI.Switch(default=false))
 </label>
 </div>
 """);
+
+# ╔═╡ b4f7c2d9-1e58-4a63-9c07-8d5e21f4a3b6
+dashboard_area("schedule-header", schedule_header)
 
 # ╔═╡ 69993fb8-daca-4b61-a711-907009dbee24
 begin
@@ -561,6 +704,10 @@ catch exception
 	nothing, nothing, Vis.Network(), sprint(showerror, exception)
 end;
 
+# ╔═╡ b7e4c1a0-5d92-4f3e-8a61-2c9f0d7b4e83
+provenance_lines = isnothing(schedule!) ?
+    Dict{String, Vector{String}}() : Vis.provenance(schedule!)
+
 # ╔═╡ cdbda6eb-b5b9-4e9e-bac0-f334c19ae28e
 schedule_feedback = @htl("""
 <div class="schedule-error">$(something(schedule_error, ""))</div>
@@ -576,21 +723,54 @@ schedule_panel = Layout.DOMElement(
 		]
 );
 
+# ╔═╡ e2b7f4a3-8c15-4d67-9e02-5fa31c7b8d46
+total_duration = isnothing(schedule!) ? 0.0 : let total = Ref(0.0)
+    schedule!(
+        GRS.Models.FlatState();
+        dryrun = (primitive!, x, dt; _...) ->
+            (isfinite(dt) && dt > 0 && (total[] += dt); nothing),
+        parallel = false,
+    )
+    total[]
+end
+
 # ╔═╡ a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
 simulation = let
     sink = Trajectories.Sink()
     error = nothing
+    calls = Ref(0)
+    fractions = Float64[]
 
     if run_simulation && !isnothing(schedule!)
         try
-            schedule!(; trace=sink)
+            ProgressLogging.@withprogress begin
+                schedule!(;
+                    trace=sink,
+                    consolidated_progress = fraction_reporter(total_duration) do fraction
+                        calls[] += 1
+                        push!(fractions, fraction)
+                        ProgressLogging.@logprogress fraction
+                    end,
+                )
+            end
         catch exception
             error = sprint(showerror, exception)
         end
     end
 
-    (; sink, error)
+    (; sink, error, calls = calls[], fractions)
 end
+
+
+# ╔═╡ 4e08fd53-8c97-4091-aca0-a2b01188ccc0
+(;
+    total_duration,
+    calls = simulation.calls,
+    n_fractions = length(simulation.fractions),
+    first_few = first(simulation.fractions, 5),
+    last_few = last(simulation.fractions, 5),
+)
+
 
 # ╔═╡ 5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30
 trace = Trajectories.catenate(simulation.sink)
@@ -623,21 +803,36 @@ model_options = Vis.paths(network)
 # ╔═╡ 6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
 shared_species_control = @bind show_shared_species PlutoUI.Switch(default=false);
 
+# ╔═╡ d9a6e3c2-7fb4-4156-ac83-4eb21f9d6a05
+model_control = @bind selected_model PlutoUI.Select(
+    model_options;
+    default=length(model_options) == 1 ? only(model_options) : nothing,
+);
+
+# ╔═╡ c8f5d2b1-6ea3-4045-9b72-3da10e8c5f94
+network_description = let
+    lines = get(provenance_lines, something(selected_model, ""), String[])
+    @htl("""
+    <div class="network-provenance">
+        $((@htl("<div>$(line)</div>") for line in lines))
+    </div>
+    """)
+end;
+
 # ╔═╡ 0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 network_header = @htl("""
-<div class="dashboard-header">
-    <label class="dashboard-option">
-        <span>model:</span>
-        $(@bind selected_model PlutoUI.Select(
-            model_options;
-            default=length(model_options) == 1 ? only(model_options) : nothing,
-        ))
-    </label>
-
-    <label class="dashboard-option">
-        <span>shared species:</span>
-        $(shared_species_control)
-    </label>
+<div class="dashboard-header stacked">
+    <div class="dashboard-controls">
+        <label class="dashboard-option">
+            <span>model:</span>
+            $(model_control)
+        </label>
+        <label class="dashboard-option">
+            <span>shared species:</span>
+            $(shared_species_control)
+        </label>
+    </div>
+    $(network_description)
 </div>
 """);
 
@@ -665,7 +860,7 @@ network_view = Page.sync(gene_selection, Bonito.App(cytoscape_graph));
 dashboard_area(
     "network",
     network_header,
-    dashboard_panel(network_view),
+    dashboard_panel(network_view; height=600),
 )
 
 # ╔═╡ d1907f4c-3b26-4e85-9a70-52c8f31be6d4
@@ -718,12 +913,18 @@ trajectory_tracks_control = @bind selected_tracks PlutoUI.MultiSelect(
 trajectory_view = if run_simulation && !ismissing(dark_mode)
     Bonito.App() do
         with_theme(dark_mode ? theme_dark() : Theme()) do
-            Trajectories.render(
-                trajectories;
-                tracks=selected_tracks,
-                selected_genes=visible_genes,
-                group_colors,
-                aggregate_mode,
+            DOM.div(
+                WGLMakie.WithConfig(
+                    Trajectories.render(
+                        trajectories;
+                        tracks=selected_tracks,
+                        selected_genes=visible_genes,
+                        group_colors,
+                        aggregate_mode,
+                    );
+                    resize_to = (:parent, nothing),
+                );
+                style = "width: 100%; height: 100%;",
             )
         end
     end
@@ -766,7 +967,7 @@ trajectory_header = isnothing(trajectory_view) ? nothing : @htl("""
 dashboard_area(
     "trajectory",
     trajectory_header,
-    dashboard_panel(trajectory_view),
+    dashboard_panel(trajectory_view; height=180 * max(1, length(selected_tracks))),
 )
 
 # ╔═╡ 4a1c8e77-2d95-4f3a-b0e6-1c7d9f2a4b58
@@ -797,7 +998,7 @@ phase_coloring_control = @bind phase_coloring PlutoUI.Select(
 );
 
 # ╔═╡ ffa07386-4884-4f9d-9e2d-29da604aec87
-phase_projection = if !isnothing(phase_snapshot) && !isempty(phase_snapshot.states)
+phase_projection = if !isnothing(phase_snapshot)
     Trajectories.project(
         phase_snapshot;
         components=phase_components,
@@ -835,7 +1036,13 @@ phase_header = !(run_simulation && show_phase) ? nothing : @htl("""
 phase_view = if !isnothing(phase_projection) && !ismissing(dark_mode)
     Bonito.App() do
         with_theme(dark_mode ? theme_dark() : Theme()) do
-            Trajectories.render(phase_projection)
+            DOM.div(
+                WGLMakie.WithConfig(
+                    Trajectories.render(phase_projection);
+                    resize_to = (:parent, nothing),
+                );
+                style = "width: 100%; height: 100%;",
+            )
         end
     end
 end
@@ -843,10 +1050,9 @@ end
 # ╔═╡ 3c7f1052-9e6a-4144-b5f8-2a06c419731e
 dashboard_area(
     "left",
-    schedule_header,
     schedule_panel,
     phase_header,
-    dashboard_panel(phase_view),
+    dashboard_panel(phase_view; height=450),
 )
 
 # ╔═╡ a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
@@ -879,7 +1085,6 @@ begin
         width: 100%;
         height: 60px;
         padding: 0 1rem;
-        margin-bottom: 0.75rem;
         border-bottom: 1px solid color-mix(
             in srgb,
             currentColor 15%,
@@ -949,6 +1154,8 @@ dashboard_area("header", app_header)
 # ╠═116c3c09-d5b1-4c86-8c08-c470df26099b
 # ╠═2b6e0f41-8d59-4033-a4e7-19f5b308620d
 # ╠═3c7f1052-9e6a-4144-b5f8-2a06c419731e
+# ╠═b7e4c1a0-5d92-4f3e-8a61-2c9f0d7b4e83
+# ╠═c8f5d2b1-6ea3-4045-9b72-3da10e8c5f94
 # ╠═4d802163-af7b-4255-a6a9-3b17d52a842f
 # ╠═5e913274-b08c-4366-b7ba-4c28e63b953a
 # ╠═8eb4f0d7-ef76-4ca7-a117-a48685c12667
@@ -960,16 +1167,19 @@ dashboard_area("header", app_header)
 # ╠═a2866674-5e4e-4738-b18e-90d122d2d161
 # ╠═d4a916c8-7b52-49f6-a8e3-1c06d5b74f29
 # ╠═e57c02d3-9f18-4a6b-b30c-6d2e81f45c93
+# ╠═b4f7c2d9-1e58-4a63-9c07-8d5e21f4a3b6
 # ╠═7abbbe81-3d0b-4d94-a69f-32c66514687f
 # ╠═8392f056-369c-45fb-9c00-719172e82616
 # ╠═cdbda6eb-b5b9-4e9e-bac0-f334c19ae28e
 # ╠═50fb4e60-7911-4f68-bd4a-166be8d4d44b
 # ╟─69993fb8-daca-4b61-a711-907009dbee24
+# ╠═e2b7f4a3-8c15-4d67-9e02-5fa31c7b8d46
 # ╠═ea610eb8-caa3-4639-8d25-58904e600e52
 # ╟─16d523e4-ebec-4d6e-b5e1-7aaf949ec5fc
 # ╠═8bff584c-2987-4584-aaed-b1ce4104d891
 # ╠═5e2c8a17-4b39-4f6d-9c81-7d0a3b5e62f4
 # ╠═6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
+# ╠═d9a6e3c2-7fb4-4156-ac83-4eb21f9d6a05
 # ╠═0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 # ╠═4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
 # ╠═27655a09-73a0-4370-933b-2e4fe2e2ecf3
@@ -981,7 +1191,10 @@ dashboard_area("header", app_header)
 # ╠═c5a70e39-4b82-4d16-9f38-e07a2c61b845
 # ╠═2b8e4ad5-6f93-4c71-9d02-af57b318ce03
 # ╟─c7cd57d6-464d-4dbc-b955-699802e60be7
+# ╠═a1d5e8f2-4b73-4c96-8e05-71fc32a9b6d8
 # ╠═a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
+# ╠═4e08fd53-8c97-4091-aca0-a2b01188ccc0
+# ╟─525c8855-9758-4d61-a8da-a616396be848
 # ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3
 # ╠═fc7d5237-870d-4549-9b95-d6eb7d508203

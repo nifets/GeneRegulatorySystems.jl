@@ -90,16 +90,21 @@ function CytoscapeJS.Cytoscape(
     include_shared=false,
     physics=DEFAULT_PHYSICS,
     edge_lengths=DEFAULT_EDGE_LENGTHS,
+    simplify_above=127,
     kwargs...
 )
+    simplified = length(network.groups) > simplify_above
+    simplified &&
+        (layout = (; layout..., quality="draft", nodeSeparation=1000, spacingFactor=4))
     strength_reference = get_strength_reference(network)
+    views = Vis.path_views(network)
     gene_elements = elements(
         Vis.gene_view(network; include_shared),
-        network, Val(:gene), group_colors, strength_reference,
+        network, Val(:gene), group_colors, strength_reference, views,
     )
-    species_elements = elements(
+    species_elements = simplified ? empty(gene_elements) : elements(
         Vis.species_view(network; include_shared),
-        network, Val(:species), group_colors, strength_reference,
+        network, Val(:species), group_colors, strength_reference, views,
     )
 
     CytoscapeJS.Cytoscape(
@@ -107,7 +112,7 @@ function CytoscapeJS.Cytoscape(
         layout=(; layout..., name="preset"),
         stylesheet,
         setup=network_setup(
-            gene_elements, species_elements, layout, physics, edge_lengths,
+            gene_elements, species_elements, layout, physics, edge_lengths, simplified,
         ),
         wheelSensitivity,
         selectionType,
@@ -117,10 +122,11 @@ function CytoscapeJS.Cytoscape(
     )
 end
 
-function elements(view::Vis.Network, network::Vis.Network, mode::Val, group_colors, strength_reference)
+function elements(view::Vis.Network, network::Vis.Network, mode::Val, group_colors,
+    strength_reference, views)
     vcat(
-        node_element.(view.nodes, Ref(network), mode, Ref(group_colors)),
-        [link_element(link, network, mode, strength_reference) for link in view.links]
+        node_element.(view.nodes, Ref(network), mode, Ref(group_colors), Ref(views)),
+        [link_element(link, network, mode, strength_reference, views) for link in view.links]
     )
 end
 
@@ -136,13 +142,13 @@ present_in(item) = sort!(collect(item.present_in))
 node_tooltip(node, network) =
     node.kind === :reaction ? Vis.node_tooltip(node, network) : nothing
 
-function node_variants(node, network)
-    variants = Vis.node_variants(node, network)
+function node_variants(node, network, views)
+    variants = Vis.node_variants(node, network, views)
     node.kind === :reaction && return variants
     Dict(path => (; variant..., tooltip=nothing) for (path, variant) in variants)
 end
 
-function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_colors)
+function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_colors, views)
     colour = parse(Colorant, node_color(node, group_colors))
     text_colour = Lab(colour).l < 50 ? "#ffffff" : "#1a1a1a"
     data = (;
@@ -154,14 +160,14 @@ function node_element(node::Vis.Node, network::Vis.Network, ::Val{:gene}, group_
         tooltip=node_tooltip(node, network),
         parameters=Vis.parameter_lines(node, network),
         presentIn=present_in(node),
-        variants=(; presentIn=node_variants(node, network)),
+        variants=(; presentIn=node_variants(node, network, views)),
         view="gene",
     )
     orphan = node.kind === :species && node.parent === nothing ? " orphan-species" : ""
     (; data, classes="$(node.kind)$orphan")
 end
 
-function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, group_colors)
+function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, group_colors, views)
     data=(;
         id=string(node.name),
         label=Vis.node_label(node),
@@ -170,7 +176,7 @@ function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, gro
         tooltip=node_tooltip(node, network),
         parameters=Vis.parameter_lines(node, network),
         presentIn=present_in(node),
-        variants=(; presentIn=node_variants(node, network)),
+        variants=(; presentIn=node_variants(node, network, views)),
         view="species",
     )
     node.parent === nothing ||
@@ -179,7 +185,7 @@ function node_element(node::Vis.Node, network::Vis.Network, ::Val{:species}, gro
     (; data, classes="$(node.kind)$orphan")
 end
 
-function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_reference) where V
+function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_reference, views) where V
     loop = link.from === link.to ? " loop" : ""
     regulation = get(link.properties, :regulation, link.kind)
     label = Vis.link_label(link)
@@ -194,7 +200,7 @@ function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_r
         view=string(V),
         tooltip=Vis.link_tooltip(link, network),
         presentIn=present_in(link),
-        variants=(; presentIn=Vis.link_variants(link, network)),
+        variants=(; presentIn=Vis.link_variants(link, network, views)),
     )
     isnothing(label) || (data = merge(data, (; label)))
     if haskey(link.properties, :at)
@@ -209,6 +215,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         # nodes
         (; selector="node", style=Dict(
             "font-family" => fontfamily,
+            "min-zoomed-font-size" => 8,
             "text-halign" => "center",
             "text-valign" => "center",
             "background-color" => "data(colour)",
@@ -297,6 +304,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "target-arrow-shape" => "triangle",
             "font-family" => fontfamily,
             "font-size" => 7,
+            "min-zoomed-font-size" => 8,
             "text-rotation" => "autorotate",
             "text-margin-y" => -8,
             "color" => "#18181b",
@@ -463,12 +471,14 @@ end
 function adaptive_view(gene_elements, species_elements)
 JS.js"""
 cy => {
+    const MIN_GENE_PIXELS = 42;
+
     const threshold = 2.0;
     const layoutState = globalThis.__grsNetworkLayout ??= {
         positions: new Map(),
         detailPositions: new Map(),
         viewport: null,
-        detailVisible: false,
+        preference: null,
     };
     const geneElements = $(gene_elements);
     const speciesElements = $(species_elements);
@@ -477,7 +487,7 @@ cy => {
     );
 
     let detailVisible = false;
-    let manualOverride = layoutState.detailVisible;
+    let preference = layoutState.preference;
     let timeout = null;
     const positions = layoutState.detailPositions;
 
@@ -506,6 +516,10 @@ cy => {
     });
 
     function updateToggle() {
+        const available = speciesElements.length > 0;
+        toggle.disabled = !available;
+        toggle.style.opacity = available ? "1" : "0.4";
+        toggle.style.cursor = available ? "pointer" : "default";
         const label = detailVisible ? "gene view" : "species view";
         const detail = detailVisible
             ? '<path fill-rule="evenodd" d="M3 6.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5"/>'
@@ -555,6 +569,11 @@ cy => {
             };
         });
     }
+    function detailLegible() {
+        const genes = cy.nodes(".gene");
+        return speciesElements.length > 0 && genes.nonempty() &&
+            genes.first().renderedWidth() >= MIN_GENE_PIXELS;
+    }
 
     function layoutDetail(genePositions) {
         cy.nodes(".gene").forEach(gene => {
@@ -603,9 +622,8 @@ cy => {
         });
     }
     function showDetail() {
-        if (detailVisible) return;
+        if (detailVisible || !detailLegible()) return;
         detailVisible = true;
-        layoutState.detailVisible = true;
         updateToggle();
         const genePositions = new Map(
             cy.nodes(".gene").map(gene => [
@@ -626,10 +644,11 @@ cy => {
         })
         layoutDetail(genePositions);
     }
+
     function hideDetail() {
         if (!detailVisible) return;
         detailVisible = false;
-        layoutState.detailVisible = false;
+
         updateToggle();
         cy.nodes(":child").forEach(node => {
             positions.set(node.id(), node.position());
@@ -641,24 +660,24 @@ cy => {
             cy.nodes(".gene").removeClass("compound-parent");
         })
     }
+    function wantDetail() {
+        return detailLegible() && (preference ?? cy.zoom() > threshold);
+    }
+
     function update() {
-        const shouldShow = cy.zoom() > threshold;
-        if (manualOverride) {
-            if (shouldShow === detailVisible) manualOverride = false;
-            return;
-        }
-        shouldShow ? showDetail() : hideDetail();
+        const zoomed = cy.zoom() > threshold;
+        if (preference === zoomed) preference = layoutState.preference = null;
+        wantDetail() ? showDetail() : hideDetail();
     }
 
     toggle.addEventListener("click", event => {
         event.stopPropagation();
-        manualOverride = true;
-        detailVisible ? hideDetail() : showDetail();
+        if (speciesElements.length === 0) return;
+        preference = layoutState.preference = !detailVisible;
+        update();
     });
     host.appendChild(toggle);
     updateToggle();
-
-    if (layoutState.detailVisible) showDetail();
 
     cy.on("zoom", () => {
         clearTimeout(timeout);
@@ -821,6 +840,14 @@ function persistent_layout(layout)
         };
         const positions = layoutState.positions;
         const nodes = cy.nodes();
+        const signature = nodes.map(node => node.id()).sort().join("|");
+        const sameGraph = layoutState.signature === signature;
+        layoutState.signature = signature;
+        if (!sameGraph) {
+            positions.clear();
+            layoutState.detailPositions?.clear();
+            layoutState.viewport = null;
+        }
         let restored = 0;
 
         nodes.forEach(node => {
@@ -846,10 +873,11 @@ function persistent_layout(layout)
             await new Promise(resolve => {
                 const run = cy.layout({
                     ...$(layout),
-                    randomize: restored === 0
+                    randomize: true
                 });
                 run.one("layoutstop", () => {
                     rememberPositions();
+                    cy.fit(undefined, 50);
                     resolve();
                 });
                 run.run();
@@ -887,11 +915,13 @@ const DEFAULT_PHYSICS = (;
 
 const DEFAULT_EDGE_LENGTHS = (; gene=400, strong=200, reaction=200, species=20)
 
-function continuous_physics(physics, edge_lengths)
+function continuous_physics(physics, edge_lengths, simplified)
     JS.js"""
     cy => {
         const layoutState = globalThis.__grsNetworkLayout ??= {};
+        const simplified = $(simplified);
         layoutState.physicsEnabled ??= true;
+        if (simplified) layoutState.physicsEnabled = false;
 
         let running = null;
         let internal = false;
@@ -987,6 +1017,8 @@ function continuous_physics(physics, edge_lengths)
         function updateToggle() {
             const enabled = layoutState.physicsEnabled;
             const label = enabled ? "pause physics" : "resume physics";
+            toggle.disabled = simplified;
+            toggle.style.cursor = simplified ? "default" : "pointer";
             toggle.title = label;
             toggle.setAttribute("aria-label", label);
             toggle.style.opacity = enabled ? "1" : "0.4";
@@ -1007,6 +1039,7 @@ function continuous_physics(physics, edge_lengths)
 
         toggle.addEventListener("click", event => {
             event.stopPropagation();
+            if (simplified) return;
             layoutState.physicsEnabled ? disable() : enable();
             updateToggle();
         });
@@ -1014,7 +1047,7 @@ function continuous_physics(physics, edge_lengths)
         updateToggle();
         cy.on("destroy", () => toggle.remove());
 
-        start();
+        if (!simplified) start();
     }
     """
 end
@@ -1051,14 +1084,14 @@ function automatic_theme()
 end
 
 function network_setup(
-    gene_elements, species_elements, layout, physics, edge_lengths,
+    gene_elements, species_elements, layout, physics, edge_lengths, simplified,
 )
     adaptive = adaptive_view(gene_elements, species_elements)
     selection = selection_view()
     parameters = inline_parameters()
     setup_layout = persistent_layout(layout)
     setup_physics = isnothing(physics) ? nothing :
-        continuous_physics(physics, edge_lengths)
+        continuous_physics(physics, edge_lengths, simplified)
     theme = automatic_theme()
 
     JS.js"""
@@ -1070,7 +1103,7 @@ function network_setup(
         const setupPhysics = $(setup_physics);
         const setupTheme = $(theme);
 
-        await setupLayout(cy);
+        try { await setupLayout(cy); } catch (error) { console.error(error); }
         setupTheme(cy);
         setupAdaptive(cy);
         setupSelection(cy);
