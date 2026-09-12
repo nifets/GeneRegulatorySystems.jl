@@ -46,6 +46,11 @@ clone_problem(f!) = lightclone(f!.problem)
 normalize_name(s) =
     Symbol(replace(String(ModelingToolkit.getname(s)), '₊' => '.'))
 
+# Replace only the last '.' in the name with the scope separator '₊' because
+# gene names may contain dots while the kind names certainly do not.
+symbolic_name(name::Symbol) =
+    Symbol(replace(String(name), r"\.(?=[^.]*$)" => '₊'))
+
 function Models.Reaction(reaction::Catalyst.Reaction)
     function reagents(species, stoichiometries)
         Models.Reagents(Dict(
@@ -143,10 +148,11 @@ end
 
 @kwdef struct CallbackProgress
     callback
+    path = nothing
 end
 
 function (progress::CallbackProgress)(integrator)
-    progress.callback(:advancing, done = integrator.t)
+    progress.callback(:advancing, done = integrator.t, path = progress.path)
     JumpProcesses.u_modified!(integrator, false)
 end
 
@@ -272,12 +278,12 @@ function jump_problem(system, aggregator, source;
     problem = discrete_problem(system, op, tspan; u0_eltype=Float64)
     ids = Dict(ModelingToolkit.value(u) => i
         for (i, u) in enumerate(ModelingToolkit.unknowns(system)))
-    equations = MTKB.jumps(system)
+    jumps = MTKB.jumps(system)
     majs = Vector{JumpProcesses.MassActionJump}(
-        filter(j -> j isa JumpProcesses.MassActionJump, equations))
+        filter(j -> j isa JumpProcesses.MassActionJump, jumps))
     crjs = Vector{JumpProcesses.ConstantRateJump}(
-        filter(j -> j isa JumpProcesses.ConstantRateJump, equations))
-    graphs = dependency_graphs(system, aggregator, ArrayPartition(majs, crjs))
+        filter(j -> j isa JumpProcesses.ConstantRateJump, jumps))
+    graphs = dependency_graphs(system, aggregator, ArrayPartition(majs, crjs), ids)
     stoichiometry = net_stoichiometry(aggregator, ids, crjs)
 
     JumpProcesses.JumpProblem(
@@ -286,7 +292,7 @@ function jump_problem(system, aggregator, source;
             massaction_jumps = isempty(majs) ? nothing : MTKB.assemble_maj(
                 majs, ids,
                 MTKB.JumpSysMajParamMapper(system, problem.p;
-                    jseqs = equations, rateconsttype = Float64)
+                    jseqs = jumps, rateconsttype = Float64)
             ),
             constant_jumps = constant_rate_jumps(source, problem, system, ids, crjs)
         );
@@ -306,13 +312,14 @@ function jump_problem(system, aggregator, source;
     )
 end
 
-function dependency_graphs(system, aggregator, equations)
+function dependency_graphs(system, aggregator, jumps, ids)
     JumpProcesses.needs_vartojumps_map(aggregator) ||
         JumpProcesses.needs_depgraph(aggregator) ||
         aggregator isa JumpProcesses.NullAggregator ||
         return (;)
-    forward = MTKB.asgraph(system; eqs = equations)
-    backward = MTKB.variable_dependencies(system; eqs = equations)
+
+    forward = MTKB.asgraph([reads(jump, ids) for jump in jumps], ids)
+    backward = variable_dependencies([writes(jump, ids) for jump in jumps], ids)
     (;
         vartojumps_map = forward.badjlist,
         jumptovars_map = backward.badjlist,
@@ -321,15 +328,50 @@ function dependency_graphs(system, aggregator, equations)
     )
 end
 
-net_stoichiometry(::JumpProcesses.AbstractAggregatorAlgorithm, ids, equations) = (;)
+function reads(jump, ids)
+    buffer = Set()
+    ModelingToolkit.Symbolics.get_variables!(buffer, jump.rate)
+    [variable for variable in buffer if haskey(ids, ModelingToolkit.value(variable))]
+end
 
-net_stoichiometry(::JumpProcesses.TauSplitting, ids, equations) = (;
+function reads(jump::JumpProcesses.MassActionJump, ids)
+    buffer = Set()
+    rates = ModelingToolkit.value(jump.scaled_rates)
+    rates isa Number || ModelingToolkit.Symbolics.get_variables!(buffer, rates)
+    for (species, _) in jump.reactant_stoch
+        push!(buffer, species)
+    end
+    [variable for variable in buffer if haskey(ids, ModelingToolkit.value(variable))]
+end
+
+writes(jump::JumpProcesses.MassActionJump, ids) =
+    [species for (species, _) in jump.net_stoch
+     if haskey(ids, ModelingToolkit.value(species))]
+writes(jump, ids) =
+    [affect.lhs for affect in jump.affect! # ::AbstractVector{Symbolics.Equation}
+    # here MTK makes assumptions about the jump.affect! type that are not really documented anywhere
+     if haskey(ids, ModelingToolkit.value(affect.lhs))]
+
+function variable_dependencies(modified, ids)
+    badjlist = [unique!(sort!([ids[ModelingToolkit.value(v)] for v in vars])) for vars in modified]
+    fadjlist = [Vector{Int}() for _ in 1:length(ids)]
+    edges = 0
+    for (jump, variables) in enumerate(badjlist)
+        foreach(variable -> push!(fadjlist[variable], jump), variables)
+        edges += length(variables)
+    end
+    MTKB.BipartiteGraph(edges, fadjlist, badjlist)
+end
+
+net_stoichiometry(::JumpProcesses.AbstractAggregatorAlgorithm, ids, jumps) = (;)
+
+net_stoichiometry(::JumpProcesses.TauSplitting, ids, jumps) = (;
     jumptostoich_map = [
         Pair{Int, Int}[
             ids[ModelingToolkit.value(affect.lhs)] => stoichiometry(affect)
             for affect in jump.affect!
         ]
-        for jump in equations
+        for jump in jumps
     ]
 )
 
@@ -346,20 +388,60 @@ function stoichiometry(affect::ModelingToolkit.Equation)
     Int(change)
 end
 
-constant_rate_jumps(::Nothing, problem, system, ids, equations) =
-    [MTKB.assemble_crj(system, j, ids) for j in equations]
+const ParameterIndex = MTKB.ParameterIndex{MTKB.SciMLStructures.Tunable, Int}
 
-function constant_rate_jumps(directions::AbstractVector, problem, system, ids, equations)
-    jumps = constant_rate_jumps(nothing, problem, system, ids, equations)
-    length(directions) == length(jumps) || error(
-        "got $(length(directions)) direction vectors for $(length(jumps)) ConstantRateJumps"
+struct Affect{N}
+    species::NTuple{N, Int}
+    change::NTuple{N, Int8}
+end
+
+function (a::Affect{N})(integrator) where N
+    @inbounds for i in 1:N
+        integrator.u[a.species[i]] += a.change[i]
+    end
+    nothing
+end
+
+struct Indices
+    species::Dict{Symbol, Int}
+    parameters::Dict{Symbol, ParameterIndex}
+end
+
+Indices(system, ids::AbstractDict) = Indices(
+    Dict{Symbol, Int}(
+        normalize_name(unknown) => index for (unknown, index) in ids),
+    Dict{Symbol, ParameterIndex}(
+        normalize_name(parameter) =>
+            SymbolicIndexingInterface.parameter_index(
+                system, ModelingToolkit.getname(parameter))
+        for parameter in ModelingToolkit.parameters(system)),
+)
+
+function lrate end
+function urate end
+
+bounded_jump(rate, affect) = JumpProcesses.ConstantRateJump(rate, affect;
+    bounds = (ulow, uhigh, u, p, _) -> JumpProcesses.RateBounds(
+        lrate = lrate(rate, ulow, uhigh, p), urate = urate(rate, ulow, uhigh, p)),
+    lrate = (ulow, uhigh, u, p, _) -> JumpProcesses.RateBounds(
+        lrate = lrate(rate, ulow, uhigh, p)),
+    urate = (ulow, uhigh, u, p, _) -> JumpProcesses.RateBounds(
+        urate = urate(rate, ulow, uhigh, p)))
+
+constant_rate_jumps(::Nothing, problem, system, ids, jumps) =
+    [MTKB.assemble_crj(system, j, ids) for j in jumps]
+
+function constant_rate_jumps(directions::AbstractVector, problem, system, ids, jumps)
+    unbounded = constant_rate_jumps(nothing, problem, system, ids, jumps)
+    length(directions) == length(unbounded) || error(
+        "got $(length(directions)) direction vectors for $(length(unbounded)) ConstantRateJumps"
     )
     [
         JumpProcesses.ConstantRateJump(c.rate, c.affect!;
             bounds = bracket_bound(c.rate, dirs, problem.u0),
             lrate = lower_bound(c.rate, dirs, problem.u0),
             urate = upper_bound(c.rate, dirs, problem.u0)
-        ) for (c, dirs) in zip(jumps, directions)
+        ) for (c, dirs) in zip(unbounded, directions)
     ]
 end
 
@@ -396,7 +478,7 @@ end
 function bracket_bound(rate, directions, u)
     ulow_corner = copy(u)
     uhigh_corner = copy(u)
-    function (ulow, uhigh, p, t)
+    function (ulow, uhigh, u, p, t)
         corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
         JumpProcesses.RateBounds(
             lrate = rate(ulow_corner, p, t),
@@ -408,7 +490,7 @@ end
 function lower_bound(rate, directions, u)
     ulow_corner = copy(u)
     uhigh_corner = copy(u)
-    function (ulow, uhigh, p, t)
+    function (ulow, uhigh, u, p, t)
         corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
         JumpProcesses.RateBounds(
             lrate = rate(ulow_corner, p, t)
@@ -419,7 +501,7 @@ end
 function upper_bound(rate, directions, u)
     ulow_corner = copy(u)
     uhigh_corner = copy(u)
-    function (ulow, uhigh, p, t)
+    function (ulow, uhigh, u, p, t)
         corner_states!(ulow_corner, uhigh_corner, ulow, uhigh, directions)
         JumpProcesses.RateBounds(
             urate = rate(uhigh_corner, p, t)
@@ -645,6 +727,7 @@ function (f!::JumpModel)(
     record = false,
     consolidated_progress = nothing,
     verbose = consolidated_progress === nothing,
+    path = nothing,
     _...
 )
     f! === x.f! || error("incompatible JumpState, must call adapt!(x, f!)")
@@ -654,7 +737,7 @@ function (f!::JumpModel)(
     if verbose
         progress.reporter.t0 = Models.t(x)
     else
-        progress.reporter = CallbackProgress(consolidated_progress)
+        progress.reporter = CallbackProgress(consolidated_progress, path)
     end
 
     verbose && @logmsg Progress :advancing at = "JumpModel" todo = Δt

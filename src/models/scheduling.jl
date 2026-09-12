@@ -521,7 +521,7 @@ function (f!::Schedule{Scope})(
         verbose && @logmsg Progress :preparing at = f!.path todo = Δt
         if verbose && consolidate_progress(step!)
             consolidated_progress =
-                (message; todo = nothing, done = 0) ->
+                (message; todo = nothing, done = 0, _...) ->
                     @logmsg Progress message at = f!.path todo done
         end
         done = 0.0

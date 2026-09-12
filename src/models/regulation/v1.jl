@@ -354,6 +354,11 @@ the system is not empty.
     promoter_model::Symbol = :switching
 end
 
+Definition(base::Definition; kwargs...) = Definition(;
+    (field => getfield(base, field) for field in fieldnames(Definition))...,
+    kwargs...
+)
+
 cast(::Type{Vector{Gene}}, xs::AbstractVector; context) = [
     cast(
         Gene,
@@ -578,15 +583,12 @@ function gene(definition::Gene; polymerases, ribosomes, proteasomes, t, promoter
 end
 
 function species_variable(name::Symbol; t)
-    # Replace only the last '.' in the name with the scope separator '₊'
-    # because the gene names may contain dots while the kind names certainly do
-    # not.
-    name = Symbol(replace(String(name), r"\.(?=[^.]*$)" => '₊'))
+    name = SciML.symbolic_name(name)
     only(@species $name(t))
 end
 
 function observed_variable(name::Symbol; t)
-    name = Symbol(replace(String(name), r"\.(?=[^.]*$)" => '₊'))
+    name = SciML.symbolic_name(name)
     only(@variables $name(t))
 end
 
@@ -693,6 +695,187 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
             ]
         ),
     )
+end
+
+struct Regulators
+    source::Vector{Int}
+    at::Vector{SciML.ParameterIndex}
+    k::Vector{SciML.ParameterIndex}
+    w::Vector{Float64}
+end
+
+hill(r::Regulators, j, u, p) =
+    @inbounds hill2(u[r.source[j]], 1.0, p[r.at[j]], p[r.k[j]])
+
+aggregate(::typeof(one ∘ typeof ∘ first), r::Regulators, u, p) = 1.0
+aggregate(::typeof(minimum), r::Regulators, u, p) =
+    minimum(j -> hill(r, j, u, p), eachindex(r.source))
+aggregate(::typeof(maximum), r::Regulators, u, p) =
+    maximum(j -> hill(r, j, u, p), eachindex(r.source))
+aggregate(::typeof(mean), r::Regulators, u, p) =
+    sum(j -> hill(r, j, u, p), eachindex(r.source)) / length(r.source)
+aggregate(::typeof(geomean), r::Regulators, u, p) =
+    exp(sum(j -> log(hill(r, j, u, p)), eachindex(r.source)) / length(r.source))
+aggregate(::typeof(harmmean), r::Regulators, u, p) =
+    length(r.source) / sum(j -> inv(hill(r, j, u, p)), eachindex(r.source))
+
+function aggregate(f::Base.Fix2{typeof(genmean)}, r::Regulators, u, p)
+    q = f.x
+    total = sum(r.w)
+    total > 0.5 || return 1.0
+    abs(q) < 1e-6 &&
+        return exp(sum(j -> r.w[j] * log(hill(r, j, u, p)), eachindex(r.w)) / total)
+    (sum(j -> r.w[j] * hill(r, j, u, p) ^ q, eachindex(r.w)) / total) ^ inv(q)
+end
+
+apply(a, r::Regulators, u, p) =
+    isempty(r.source) ? 1.0 : aggregate(a, r, u, p)
+
+struct SwitchingRate{A, N}
+    k::SciML.ParameterIndex
+    regulators::Regulators
+    aggregation::A
+    site::Int
+    scale::Float64
+    offset::Float64
+    affect::SciML.Affect{N}
+end
+
+occupancy(f::SwitchingRate, u) = @inbounds f.offset + f.scale * u[f.site]
+corner(f::SwitchingRate, lo, hi) = max(occupancy(f, f.scale > 0 ? lo : hi), 0.0)
+
+(f::SwitchingRate)(u, p, _) = p[f.k] * apply(f.aggregation, f.regulators, u, p) * occupancy(f, u)
+
+SciML.lrate(f::SwitchingRate, ulow, uhigh, p) =
+    p[f.k] * apply(f.aggregation, f.regulators, uhigh, p) * corner(f, ulow, uhigh)
+SciML.urate(f::SwitchingRate, ulow, uhigh, p) =
+    p[f.k] * apply(f.aggregation, f.regulators, ulow, p) * corner(f, uhigh, ulow)
+
+struct EquilibriumRate{A, B, N}
+    k::SciML.ParameterIndex
+    kon::SciML.ParameterIndex
+    koff::SciML.ParameterIndex
+    repression::Regulators
+    activation::Regulators
+    aggregation_repression::A
+    aggregation_activation::B
+    polymerases::Int
+    affect::SciML.Affect{N}
+end
+
+function active_fraction(f::EquilibriumRate, urepression, uactivation, p)
+    kon = p[f.kon] * apply(f.aggregation_repression, f.repression, urepression, p)
+    koff = p[f.koff] * apply(f.aggregation_activation, f.activation, uactivation, p)
+    kon / (kon + koff)
+end
+
+(f::EquilibriumRate)(u, p, _) =
+    @inbounds p[f.k] * active_fraction(f, u, u, p) * u[f.polymerases]
+
+SciML.lrate(f::EquilibriumRate, ulow, uhigh, p) =
+    @inbounds p[f.k] * active_fraction(f, uhigh, ulow, p) * ulow[f.polymerases]
+SciML.urate(f::EquilibriumRate, ulow, uhigh, p) =
+    @inbounds p[f.k] * active_fraction(f, ulow, uhigh, p) * uhigh[f.polymerases]
+
+function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slots, aggregate)
+    aggregate isa typeof(one ∘ typeof ∘ first) && return Regulators(
+        Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], Float64[])
+    regulator(from) = haskey(genes, from) ? Symbol("$(from).proteins") : from
+    Regulators(
+        [indices.species[regulator(slot.from)] for slot in slots],
+        [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).at")] for slot in slots],
+        [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).k")] for slot in slots],
+        [slot.w for slot in slots],
+    )
+end
+
+function promoter_rate(jump, genes, definition::Definition, indices::SciML.Indices)
+    net_stoich = [
+        (SciML.normalize_name(ModelingToolkit.value(affect.lhs)),
+            SciML.stoichiometry(affect))
+        for affect in jump.affect!
+    ]
+    affect = SciML.Affect(
+        Tuple(indices.species[species] for (species, _) in net_stoich),
+        Tuple(Int8(change) for (_, change) in net_stoich),
+    )
+
+    promoter_rate(
+        Val(definition.promoter_model), net_stoich, affect,
+        genes, definition, indices,
+    )
+end
+
+# the MTK gernerated jumps are not labelled so we need to reverse engineer which gene they belong to
+function gene_of(net_stoich::Vector{Tuple{Symbol, Int}}, kind)
+    suffix = ".$(kind)"
+    for (name, _) in net_stoich
+        text = String(name)
+        endswith(text, suffix) && return Symbol(chopsuffix(text, suffix))
+    end
+end
+
+function promoter_rate(
+    ::Val{:equilibrium}, net_stoich, affect, genes, definition, indices,
+)
+    name = gene_of(net_stoich, "elongations")
+    name === nothing && return nothing
+    gene = genes[name]
+    EquilibriumRate(
+        indices.parameters[Symbol("$(name).trigger")],
+        indices.parameters[Symbol("$(name).activation")],
+        indices.parameters[Symbol("$(name).deactivation")],
+        regulators(indices, genes, gene, "repression", gene.repression.slots,
+            gene.repression.aggregate),
+        regulators(indices, genes, gene, "activation", gene.activation.slots,
+            gene.activation.aggregate),
+        gene.repression.aggregate,
+        gene.activation.aggregate,
+        indices.species[definition.polymerases],
+        affect,
+    )
+end
+
+function promoter_rate(
+    ::Val{:switching}, net_stoich, affect, genes, definition, indices,
+)
+    name = gene_of(net_stoich, "active")
+    name === nothing && return nothing
+    gene = genes[name]
+    active_name = Symbol("$(name).active")
+    active = indices.species[active_name]
+    activating = first(change for (species, change) in net_stoich
+        if species === active_name) > 0
+
+    kind = activating ? "repression" : "activation"
+    regulation = activating ? gene.repression : gene.activation
+    aggregate = regulation.aggregate
+
+    site, scale, offset = if !activating
+        active, 1.0, 0.0
+    elseif gene.unique
+        active, -1.0, 1.0
+    else
+        indices.species[Symbol("$(name).inactive")], 1.0, 0.0
+    end
+
+    SwitchingRate(
+        indices.parameters[Symbol("$(name).$(activating ? "activation" : "deactivation")")],
+        regulators(indices, genes, gene, kind, regulation.slots, aggregate),
+        aggregate,
+        site, scale, offset, affect,
+    )
+end
+
+function SciML.constant_rate_jumps(definition::Definition, problem, system, ids, jumps)
+    genes = Dict(g.name => g for g in definition.genes)
+    indices = SciML.Indices(system, ids)
+    map(jumps) do jump
+        promoter = promoter_rate(jump, genes, definition, indices)
+        promoter === nothing ?
+        only(SciML.constant_rate_jumps(nothing, problem, system, ids, [jump])) :
+        SciML.bounded_jump(promoter, promoter.affect)
+    end
 end
 
 function regulation(
@@ -936,7 +1119,10 @@ function promoter_bracket_data(system)
     )
 end
 
-function aggregator_options(algorithm, reaction_system, jump_system, definition)
+# `bounds = false` skips deriving the propensity directions, which only the
+# symbolic path needs -- the fast path carries its own bounds.
+function aggregator_options(algorithm, reaction_system, jump_system, definition;
+    bounds = true)
     algorithm in (RSSA, RSSACR, TauSplitting) || return (nothing, (;))
     all(definition.genes) do gene
         all(slot -> slot.k <= 0.0, gene.activation.slots) &&
@@ -950,6 +1136,9 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition)
             isdisjoint(activators, repressors)
         end || error("$(nameof(algorithm)) does not support a species both activating and repressing the same equilibrium promoter")
     end
+
+    bounds || return nothing, algorithm in (RSSA, RSSACR) ?
+        (; bracket_data = promoter_bracket_data(jump_system)) : (;)
 
     system = Catalyst.flatten(reaction_system)
     reactions = Catalyst.reactions(system)
@@ -1024,10 +1213,12 @@ function build end
 
 build(specification::AbstractDict{Symbol}) = build(
     cast(Definition, specification),
-    method = Symbol(get(specification, :method, "default"))
+    method = Symbol(get(specification, :method, "default")),
+    compilation = Symbol(get(specification, :compilation, "fast")),
 )
 
-function build(definition::Definition; method::Symbol = :default)
+function build(definition::Definition; method::Symbol = :default,
+    compilation::Symbol = :fast)
     allequal(typeof.(definition.genes)) ||
         error("mixing eukaryotic and prokaryotic genes is forbidden")
 
@@ -1076,14 +1267,18 @@ function build(definition::Definition; method::Symbol = :default)
     jump_system = complete(jump_model(reaction_system))
     algorithm = pick_method(reaction_system; method)
 
+    compilation in (:symbolic, :fast) ||
+        error("compilation must be :symbolic or :fast, got $(compilation)")
+
     directions, options = aggregator_options(
-        algorithm, reaction_system, jump_system, definition)
+        algorithm, reaction_system, jump_system, definition; bounds = compilation !== :fast)
+    source = compilation === :fast ? definition : directions
 
     Models.Wrapped(;
         definition,
         model = Models.Wrapped(
             definition = reaction_system,
-            model = SciML.JumpModel(jump_system, algorithm(), directions; options...),
+            model = SciML.JumpModel(jump_system, algorithm(), source; options...),
         ),
     )
 end

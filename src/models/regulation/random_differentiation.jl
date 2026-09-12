@@ -192,7 +192,19 @@ the [`Template`](@ref) specified by the JSON object containing `<template>...`.
 @kwdef struct Definition
     seed::String
     template::Template
+    peripheral::V1.Definition = V1.Definition()
 end
+
+Specifications.cast(::Type{Definition}, x::AbstractDict{Symbol}; context = x) =
+    Definition(;
+        template = Specifications.cast(Template, x; context),
+        peripheral = Specifications.cast(V1.Definition, x; context),
+        (
+            key => Specifications.cast(Definition, x, Val(key); context)
+            for key in keys(x)
+            if hasfield(Definition, key) && key !== :template && key !== :peripheral
+        )...
+    )
 
 Models.describe(definition::Definition) = Models.Label(" \
     'regulation/random-differentiation' definition \
@@ -272,7 +284,11 @@ function assemble_differentiation(
     )
 end
 
-function Base.rand(randomness::AbstractRNG, template::Template)
+function Base.rand(
+    randomness::AbstractRNG,
+    template::Template,
+    base::V1.Definition = V1.Definition(),
+)
     # Determine target terminal state ratios:
     ratios = Float64.(rand(randomness, template.differentiation.ratios))
     isempty(ratios) && error("no terminal states defined")
@@ -310,9 +326,9 @@ function Base.rand(randomness::AbstractRNG, template::Template)
     # regulated by differentiators chosen uniformly at random:
     peripheral =
         if template.peripheral !== nothing
-            rand(randomness, something(template.peripheral))
+            rand(randomness, something(template.peripheral), base)
         else
-            V1.Definition()
+            base
         end
     for gene in peripheral.genes
         for _ in 1:rand(randomness, template.activation.count)
@@ -352,7 +368,7 @@ end
 
 """
     build(specification::AbstractDict{Symbol})
-    build(definition::Definition; method::Symbol = :default)
+    build(definition::Definition; options...)
 
 Construct a randomly differentiating `SciML.JumpModel` from a
 [`Definition`](@ref).
@@ -390,19 +406,17 @@ For an example, see `examples/specification/random-differentiation.json`.
 function build end
 
 build(specification::AbstractDict{Symbol}) = build(
-    Definition(
-        seed = specification[:seed],
-        template = Specifications.cast(Template, specification),
-    ),
+    Specifications.cast(Definition, specification),
     method = Symbol(get(specification, :method, "default")),
+    compilation = Symbol(get(specification, :compilation, "fast")),
 )
 
-build(definition::Definition; method::Symbol = :default) = Models.Wrapped(
+build(definition::Definition; options...) = Models.Wrapped(
     model = Differentiation.build(
         # Deterministically fill in the template to create a concrete
         # Differentiation.Definition from it:
-        rand(Xoshiro(definition.seed), definition.template);
-        method,
+        rand(Xoshiro(definition.seed), definition.template, definition.peripheral);
+        options...
     );
     definition,
 )

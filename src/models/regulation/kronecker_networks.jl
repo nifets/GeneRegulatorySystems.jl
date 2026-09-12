@@ -228,7 +228,19 @@ the [`Template`](@ref) specified by the JSON object containing `<template>...`.
 @kwdef struct Definition
     seed::String
     template::Template
+    peripheral::V1.Definition = V1.Definition()
 end
+
+Specifications.cast(::Type{Definition}, x::AbstractDict{Symbol}; context = x) =
+    Definition(;
+        template = Specifications.cast(Template, x; context),
+        peripheral = Specifications.cast(V1.Definition, x; context),
+        (
+            key => Specifications.cast(Definition, x, Val(key); context)
+            for key in keys(x)
+            if hasfield(Definition, key) && key !== :template && key !== :peripheral
+        )...
+    )
 
 Models.describe(definition::Definition) = Models.Label("\
     'regulation/kronecker' definition with seed '$(definition.seed)' \
@@ -277,7 +289,7 @@ function regulations(
     if approximate
         realized =
             shadow_task_randomness!(randomness) do randomness
-                fastsample(template.adjacency)
+                sample_adjacency(template.adjacency)
             end
         map(eachcol(realized)) do column
             regulation(template, slots = [
@@ -294,6 +306,11 @@ function regulations(
             ])
         end
     end
+end
+
+function sample_adjacency(P)
+    indices = Kronecker.sampleindices(P, Int(round(sum(P))))
+    sparse(first.(indices), last.(indices), true, size(P)..., |)
 end
 
 adjacency(initiator::AbstractMatrix; k::Int) =
@@ -338,7 +355,11 @@ function Specifications.cast(
     adjacency(initiator; k)
 end
 
-function Base.rand(randomness::AbstractRNG, template::Template)
+function Base.rand(
+    randomness::AbstractRNG,
+    template::Template,
+    peripheral::V1.Definition = V1.Definition(),
+)
     n = template.count
     arguments = (;
         approximate = @something(template.approximate, n > 16),
@@ -367,7 +388,8 @@ function Base.rand(randomness::AbstractRNG, template::Template)
             regulations(something(template.proteolysis); n, arguments...)
         end
 
-    V1.Definition(;
+    V1.Definition(
+        peripheral;
         genes = [
             V1.Gene(
                 name = gene_name(i; n, template.prefix),
@@ -384,7 +406,7 @@ end
 
 """
     build(specification::AbstractDict{Symbol})
-    build(definition::Definition; method::Symbol = :default)
+    build(definition::Definition; options...)
 
 Construct a `SciML.JumpModel` from a [`Definition`](@ref).
 
@@ -415,19 +437,17 @@ function build end
 
 build(specification::AbstractDict{Symbol}) = build(
     # Pick a specific model instance by affixing the randomness:
-    Definition(
-        seed = specification[:seed],
-        template = Specifications.cast(Template, specification),
-    ),
-    method = Symbol(get(specification, :method, "default"))
+    Specifications.cast(Definition, specification),
+    method = Symbol(get(specification, :method, "default")),
+    compilation = Symbol(get(specification, :compilation, "fast")),
 )
 
-build(definition::Definition; method::Symbol = :default) = Models.Wrapped(
+build(definition::Definition; options...) = Models.Wrapped(
     model = V1.build(
         # Deterministically fill in the template to create a concrete
         # V1.Definition from it:
-        rand(Xoshiro(definition.seed), definition.template);
-        method,
+        rand(Xoshiro(definition.seed), definition.template, definition.peripheral);
+        options...
     );
     definition,
 )

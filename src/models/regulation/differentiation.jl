@@ -456,7 +456,7 @@ end
 
 """
     build(specification::AbstractDict{Symbol})
-    build(definition::Definition; method::Symbol = :default)
+    build(definition::Definition; options...)
 
 Construct a differentiating `SciML.JumpModel` from a [`Definition`](@ref).
 
@@ -490,10 +490,11 @@ function build end
 
 build(specification::AbstractDict{Symbol}) = build(
     cast(Definition, specification),
-    method = Symbol(get(specification, :method, "default"))
+    method = Symbol(get(specification, :method, "default")),
+    compilation = Symbol(get(specification, :compilation, "fast")),
 )
 
-function build(definition::Definition; method::Symbol)
+function build(definition::Definition; options...)
     # Shallow-copy genes, reactions and deposit:
     genes = Dict(gene.name => gene for gene in definition.peripheral.genes)
     reactions = copy(definition.peripheral.reactions)
@@ -519,13 +520,11 @@ function build(definition::Definition; method::Symbol)
     # Compile down to a V1 model:
     model = V1.build(
         V1.Definition(
-            genes = collect(values(genes));
-            definition.peripheral.polymerases,
-            definition.peripheral.ribosomes,
-            definition.peripheral.proteasomes,
+            definition.peripheral;
+            genes = collect(values(genes)),
             reactions,
         );
-        method,
+        options...
     )
 
     # Replace the original Differentiation.Definition by an extended variant
