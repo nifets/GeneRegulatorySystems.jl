@@ -542,11 +542,13 @@ function (f!::Schedule{Scope})(
             done += advance
             if consolidated_progress === nothing
                 @logmsg Progress :repeating at = f!.path done
+            else
+                consolidated_progress(:advancing; done, path)
             end
         end
     else
         verbose && @logmsg Progress :descending at = f!.path
-        x = step!(x, Δt; trace, context..., path)
+        x = step!(x, Δt; trace, consolidated_progress, context..., path)
     end
 
     if haskey(f!.specification.definitions, :flush) && trace !== nothing

@@ -438,7 +438,7 @@ function build end
 build(specification::AbstractDict{Symbol}) = build(
     # Pick a specific model instance by affixing the randomness:
     Specifications.cast(Definition, specification),
-    method = Symbol(get(specification, :method, "default")),
+    method = V1.method_specification(get(specification, :method, "default")),
     compilation = Symbol(get(specification, :compilation, "fast")),
 )
 

@@ -1119,8 +1119,45 @@ function promoter_bracket_data(system)
     )
 end
 
+hybrid(definition::Definition; exact = RSSACR(), dt = Inf, kwargs...) =
+    JumpProcesses.HybridTau(exact, blending_policy(definition), dt; kwargs...)
+
+blending_policy(definition::Definition) =
+    definition.promoter_model === :switching ?
+    JumpProcesses.CriticalBlend(all(gene -> gene.unique, definition.genes) ? 2 : 10) :
+    JumpProcesses.AlwaysLeap()
+
+resolve_method(method::JumpProcesses.AbstractAggregatorAlgorithm, system, definition) =
+    method
+
+resolve_method(method::Symbol, system, definition) =
+    method === :HybridTau ? hybrid(definition) : pick_method(system; method)
+
+function resolve_method(method::AbstractDict{Symbol}, system, definition)
+    name = Symbol(get(method, :name, "default"))
+    name === :HybridTau ||
+        error("only \"HybridTau\" takes options; got $(name)")
+    hybrid(definition;
+        exact = pick_method(system; method = Symbol(get(method, :exact, "RSSACR")))(),
+        dt = get(method, :dt, Inf),
+        epsilon = get(method, :epsilon, 0.05))
+end
+
 # `bounds = false` skips deriving the propensity directions, which only the
 # symbolic path needs -- the fast path carries its own bounds.
+function aggregator_options(algorithm::JumpProcesses.HybridTau, reaction_system,
+        jump_system, definition; bounds = true)
+    if definition.promoter_model === :switching &&
+       algorithm.policy isa JumpProcesses.CriticalBlend
+        nc = algorithm.policy.nc
+        copies = all(gene -> gene.unique, definition.genes) ? 1 : 10
+        nc <= copies &&
+            @warn "HybridTau with promoter_model = :switching and CriticalBlend(nc = $nc) leaps transcription with the promoter gate held fixed over the window. Pass CriticalBlend($(copies + 1)) or larger, or use `V1.hybrid(definition)`."
+    end
+    aggregator_options(typeof(algorithm.exact), reaction_system, jump_system, definition;
+        bounds)
+end
+
 function aggregator_options(algorithm, reaction_system, jump_system, definition;
     bounds = true)
     algorithm in (RSSA, RSSACR, TauSplitting) || return (nothing, (;))
@@ -1129,16 +1166,16 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition;
             all(slot -> slot.k <= 0.0, gene.repression.slots)
     end || error("$(nameof(algorithm)) requires every activation/repression `k` to be non-positive so that propensities are monotone in the regulator counts; this definition has a positive `k`.")
 
+    bounds || return nothing, algorithm in (RSSA, RSSACR) ?
+        (; bracket_data = promoter_bracket_data(jump_system)) : (;)
+
     if definition.promoter_model === :equilibrium
         all(definition.genes) do gene
             activators = Set(slot.from for slot in gene.activation.slots)
             repressors = Set(slot.from for slot in gene.repression.slots)
             isdisjoint(activators, repressors)
-        end || error("$(nameof(algorithm)) does not support a species both activating and repressing the same equilibrium promoter")
+        end || error("$(nameof(algorithm)) with compilation=:symbolic does not support a species both activating and repressing the same equilibrium promoter; use compilation=:fast")
     end
-
-    bounds || return nothing, algorithm in (RSSA, RSSACR) ?
-        (; bracket_data = promoter_bracket_data(jump_system)) : (;)
 
     system = Catalyst.flatten(reaction_system)
     reactions = Catalyst.reactions(system)
@@ -1202,6 +1239,15 @@ chosen based on the size of the `ReactionSystem`: `SortingDirect` for small
 systems (having less than 100 species and less than 1000 reactions), and
 `RSSACR` otherwise.
 
+`"HybridTau"` selects the hybrid exact/tau-leaping aggregator, with a blending
+policy chosen from `promoter_model`. It may instead be given as a JSON object
+```
+{"name": "HybridTau", "exact": <exact>, "epsilon": <epsilon>, "dt": <dt>}
+```
+where `<exact>` names the inner exact aggregator (`"RSSACR"` by default),
+`<epsilon>` is the tau-selection tolerance, and `<dt>` an upper bound on the
+leap window.
+
 # Specification
 
 V1 models are specified in JSON as `{"{regulation/v1}": <definition>}` where
@@ -1213,11 +1259,16 @@ function build end
 
 build(specification::AbstractDict{Symbol}) = build(
     cast(Definition, specification),
-    method = Symbol(get(specification, :method, "default")),
+    method = method_specification(get(specification, :method, "default")),
     compilation = Symbol(get(specification, :compilation, "fast")),
 )
 
-function build(definition::Definition; method::Symbol = :default,
+method_specification(method) = Symbol(method)
+method_specification(method::AbstractDict{Symbol}) = method
+
+function build(definition::Definition;
+    method::Union{Symbol, AbstractDict{Symbol},
+        JumpProcesses.AbstractAggregatorAlgorithm} = :default,
     compilation::Symbol = :fast)
     allequal(typeof.(definition.genes)) ||
         error("mixing eukaryotic and prokaryotic genes is forbidden")
@@ -1265,7 +1316,7 @@ function build(definition::Definition; method::Symbol = :default,
     )
     reaction_system = complete(reaction_system)
     jump_system = complete(jump_model(reaction_system))
-    algorithm = pick_method(reaction_system; method)
+    algorithm = resolve_method(method, reaction_system, definition)
 
     compilation in (:symbolic, :fast) ||
         error("compilation must be :symbolic or :fast, got $(compilation)")
@@ -1278,7 +1329,9 @@ function build(definition::Definition; method::Symbol = :default,
         definition,
         model = Models.Wrapped(
             definition = reaction_system,
-            model = SciML.JumpModel(jump_system, algorithm(), source; options...),
+            model = SciML.JumpModel(jump_system,
+                algorithm isa JumpProcesses.AbstractAggregatorAlgorithm ? algorithm : algorithm(),
+                source; options...),
         ),
     )
 end

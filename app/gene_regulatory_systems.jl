@@ -38,6 +38,9 @@ md"""
 ## Logic
 """
 
+# ╔═╡ 2eb640a5-424b-4c20-ad79-87d2a1560b7c
+
+
 # ╔═╡ 76de62b9-be88-4b96-b801-b40872dfa0be
 md"""
 ### Schedule
@@ -740,7 +743,7 @@ simulation = let
     error = nothing
     calls = Ref(0)
     fractions = Float64[]
-
+    started = time_ns();
     if run_simulation && !isnothing(schedule!)
         try
             ProgressLogging.@withprogress begin
@@ -758,19 +761,8 @@ simulation = let
         end
     end
 
-    (; sink, error, calls = calls[], fractions)
+    (; sink, error, calls = calls[], fractions, elapsed = (time_ns() - started) / 1e9)
 end
-
-
-# ╔═╡ 4e08fd53-8c97-4091-aca0-a2b01188ccc0
-(;
-    total_duration,
-    calls = simulation.calls,
-    n_fractions = length(simulation.fractions),
-    first_few = first(simulation.fractions, 5),
-    last_few = last(simulation.fractions, 5),
-)
-
 
 # ╔═╡ 5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30
 trace = Trajectories.catenate(simulation.sink)
@@ -1066,6 +1058,10 @@ begin
     <div>
         <div class="grs-title">Gene Regulatory Systems</div>
     </div>
+    <span style="opacity:0.6; font-size:0.85em">
+        $(run_simulation ? "ran in $(round(simulation.elapsed; digits=2))s" : "")
+    </span>
+
     <a class="docs-link" href="$(docs_url)" target="_blank">
         docs <span class="external-link">↗</span>
     </a>
@@ -1161,7 +1157,8 @@ dashboard_area("header", app_header)
 # ╠═8eb4f0d7-ef76-4ca7-a117-a48685c12667
 # ╟─34a8deb2-0db9-456c-ba38-eabc3254ab50
 # ╠═40d24905-5708-4580-9ae5-71e1c1de01a9
-# ╠═12e75652-a3fd-11f1-9335-a986ee44237f
+# ╟─12e75652-a3fd-11f1-9335-a986ee44237f
+# ╠═2eb640a5-424b-4c20-ad79-87d2a1560b7c
 # ╟─76de62b9-be88-4b96-b801-b40872dfa0be
 # ╠═c81d5f60-2a47-4e93-b6d1-5f39c284ae71
 # ╠═a2866674-5e4e-4738-b18e-90d122d2d161
@@ -1193,7 +1190,6 @@ dashboard_area("header", app_header)
 # ╟─c7cd57d6-464d-4dbc-b955-699802e60be7
 # ╠═a1d5e8f2-4b73-4c96-8e05-71fc32a9b6d8
 # ╠═a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
-# ╠═4e08fd53-8c97-4091-aca0-a2b01188ccc0
 # ╟─525c8855-9758-4d61-a8da-a616396be848
 # ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3

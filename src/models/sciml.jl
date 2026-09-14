@@ -124,11 +124,16 @@ end
 
 @kwdef mutable struct TriggerProgress
     i::Int = 0
+    last::Float64 = 0.0
 end
 
 function (trigger::TriggerProgress)(_u, _t, _integrator)
     trigger.i += 1
-    trigger.i % 100000 == 0
+    trigger.i % 1000 == 0 || return false
+    now = time()
+    now - trigger.last < 0.1 && return false
+    trigger.last = now
+    true
 end
 
 # Since SciMLBase.DiscreteCallback is immutable, but we want to adjust progress
@@ -365,15 +370,19 @@ end
 
 net_stoichiometry(::JumpProcesses.AbstractAggregatorAlgorithm, ids, jumps) = (;)
 
+net_stoichiometry(::JumpProcesses.HybridTau, ids, jumps) =
+    (; crj_stoich = crj_stoichiometry(ids, jumps))
+
 net_stoichiometry(::JumpProcesses.TauSplitting, ids, jumps) = (;
-    jumptostoich_map = [
+    jumptostoich_map = crj_stoichiometry(ids, jumps))
+
+crj_stoichiometry(ids, jumps) = [
         Pair{Int, Int}[
             ids[ModelingToolkit.value(affect.lhs)] => stoichiometry(affect)
             for affect in jump.affect!
         ]
         for jump in jumps
     ]
-)
 
 function stoichiometry(affect::ModelingToolkit.Equation)
     change = ModelingToolkit.value(ModelingToolkit.Symbolics.expand(
