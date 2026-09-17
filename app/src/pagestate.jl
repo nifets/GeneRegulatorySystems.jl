@@ -9,7 +9,7 @@ end
 const RUNTIME = @htl("""
 <span>
 <script>
-    if (!window.PageState) {
+    if (!window.__grs_page_state?.connect) {
         const values = new Map()
         const listeners = new Map()
 
@@ -53,7 +53,7 @@ const RUNTIME = @htl("""
             },
         }
 
-        window.PageState = store
+        window.__grs_page_state = store
     }
 </script>
 </span>
@@ -64,7 +64,7 @@ bridge(shared::Shared) = @htl("""
 $(RUNTIME)
 <script>
     const root = currentScript.parentElement
-    const state = window.PageState.connect($(shared.key), "pluto")
+    const state = window.__grs_page_state.connect($(shared.key), "pluto")
     let timer
     let sent = null
 
@@ -112,7 +112,7 @@ $(RUNTIME)
 <script>
     const select = currentScript.parentElement.querySelector("select")
     const search = currentScript.parentElement.querySelector("input")
-    const state = window.PageState.connect($(shared.key), "picker")
+    const state = window.__grs_page_state.connect($(shared.key), "picker")
 
     search.addEventListener("input", () => {
         const query = search.value.trim().toLowerCase()
@@ -142,7 +142,7 @@ $(RUNTIME)
 $(view)
 <script>
     const root = currentScript.parentElement
-    const state = window.PageState.connect($(shared.key), "cytoscape")
+    const state = window.__grs_page_state.connect($(shared.key), "cytoscape")
 
     const api = () =>
         [...root.querySelectorAll("div")]

@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v1.0.1
+# v1.0.3
 
 #> [frontmatter]
 #> title = "Gene Regulatory Systems"
@@ -281,6 +281,8 @@ dashboard_styles = @htl("""
 
     .area-schedule-header .dashboard-option select {
         min-width: 0;
+        max-width: 8rem;
+        text-overflow: ellipsis;
     }
 
 
@@ -565,12 +567,7 @@ begin
     using Bonito
     using WGLMakie
     WGLMakie.activate!()
-
-    Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "JSONEditor.jl"))
-    Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "pagestate.jl"))
-    Revise.includet(@__MODULE__, joinpath(@__DIR__, "src", "trajectories", "trajectories.jl"))
-
-    const Page = PageState
+    using GRSApp: Trajectories, PageState, JSONEditor
 end;
 
 # ╔═╡ 032084a8-991a-4eeb-a5e9-78110b2b7cbe
@@ -634,16 +631,6 @@ $(@bind selected_schedule PlutoUI.Select([
 """);
 
 
-# ╔═╡ 8392f056-369c-45fb-9c00-719172e82616
-schedule_editor = @bind schedule_json JSONEditor(read(selected_schedule, String); height="800px");
-
-# ╔═╡ e57c02d3-9f18-4a6b-b30c-6d2e81f45c93
-autosave = if startswith(selected_schedule, schedule_dir) &&
-        !ismissing(schedule_json) &&
-        read(selected_schedule, String) != schedule_json
-    write(selected_schedule, schedule_json)
-end;
-
 # ╔═╡ 7abbbe81-3d0b-4d94-a69f-32c66514687f
 schedule_header = @htl("""
 <div class="dashboard-header">
@@ -660,6 +647,16 @@ schedule_header = @htl("""
 
 # ╔═╡ b4f7c2d9-1e58-4a63-9c07-8d5e21f4a3b6
 dashboard_area("schedule-header", schedule_header)
+
+# ╔═╡ 8392f056-369c-45fb-9c00-719172e82616
+schedule_editor = @bind schedule_json JSONEditor(read(selected_schedule, String); height="800px");
+
+# ╔═╡ e57c02d3-9f18-4a6b-b30c-6d2e81f45c93
+autosave = if startswith(selected_schedule, schedule_dir) &&
+        !ismissing(schedule_json) &&
+        read(selected_schedule, String) != schedule_json
+    write(selected_schedule, schedule_json)
+end;
 
 # ╔═╡ 69993fb8-daca-4b61-a711-907009dbee24
 begin
@@ -734,39 +731,6 @@ total_duration = isnothing(schedule!) ? 0.0 : let total = Ref(0.0)
     )
     total[]
 end
-
-# ╔═╡ a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
-simulation = let
-    sink = Trajectories.Sink()
-    error = nothing
-    calls = Ref(0)
-    fractions = Float64[]
-    started = time_ns();
-    if run_simulation && !isnothing(schedule!)
-        try
-            ProgressLogging.@withprogress begin
-                schedule!(;
-                    trace=sink,
-                    consolidated_progress = fraction_reporter(total_duration) do fraction
-                        calls[] += 1
-                        push!(fractions, fraction)
-                        ProgressLogging.@logprogress fraction
-                    end,
-                )
-            end
-        catch exception
-            error = sprint(showerror, exception)
-        end
-    end
-
-    (; sink, error, calls = calls[], fractions, elapsed = (time_ns() - started) / 1e9)
-end
-
-# ╔═╡ 5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30
-trace = Trajectories.catenate(simulation.sink)
-
-# ╔═╡ 24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
-levels = Trajectories.lod(trace)
 
 # ╔═╡ 180bf479-2269-4d94-a9f6-b3c060c17ab9
 track_options = intersect([:activity, :elongations, :premrnas, :mrnas, :proteins, :active, :inactive], unique(vcat(
@@ -847,10 +811,10 @@ end;
 CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, selected_model);
 
 # ╔═╡ 5f0c8a71-93de-4b02-a6c4-1e78d3520fb9
-gene_selection = Page.Shared("genes")
+gene_selection = PageState.Shared("genes")
 
 # ╔═╡ aa943167-f20e-4349-a14b-d512c8005ab0
-network_view = Page.sync(gene_selection, Bonito.App(cytoscape_graph));
+network_view = PageState.sync(gene_selection, Bonito.App(cytoscape_graph));
 
 # ╔═╡ 769e4fd2-71c3-418b-8838-0c8658dad724
 dashboard_area(
@@ -859,16 +823,44 @@ dashboard_area(
 )
 
 # ╔═╡ d1907f4c-3b26-4e85-9a70-52c8f31be6d4
-gene_selection_bridge = @bind selected_gene_names Page.bridge(gene_selection)
+gene_selection_bridge = @bind selected_gene_names PageState.bridge(gene_selection)
 
 # ╔═╡ 6b2e94f1-8d05-4c73-b1a8-97f2e6c04a3d
-selected_genes = coalesce(selected_gene_names, String[])
+selected_genes = selected_gene_names isa AbstractVector ?
+    String.(selected_gene_names) : String[]
 
 # ╔═╡ c5a70e39-4b82-4d16-9f38-e07a2c61b845
 visible_genes = isempty(selected_genes) ? string.(network.groups) : selected_genes
 
 # ╔═╡ 2b8e4ad5-6f93-4c71-9d02-af57b318ce03
-trajectory_genes_control = Page.picker(gene_selection, string.(network.groups))
+trajectory_genes_control = PageState.picker(gene_selection, string.(network.groups))
+
+# ╔═╡ a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
+simulation = let
+    sink = Trajectories.Sink()
+    error = nothing
+    calls = Ref(0)
+    fractions = Float64[]
+    started = time_ns();
+    if run_simulation && !isnothing(schedule!)
+        try
+            ProgressLogging.@withprogress begin
+                schedule!(;
+                    trace=sink,
+                    consolidated_progress = fraction_reporter(total_duration) do fraction
+                        calls[] += 1
+                        push!(fractions, fraction)
+                        ProgressLogging.@logprogress fraction
+                    end,
+                )
+            end
+        catch exception
+            error = sprint(showerror, exception)
+        end
+    end
+
+    (; sink, error, calls = calls[], fractions, elapsed = (time_ns() - started) / 1e9)
+end
 
 # ╔═╡ fc7d5237-870d-4549-9b95-d6eb7d508203
 path_options = let
@@ -885,9 +877,6 @@ end
 # ╔═╡ 1a7f39c4-5d82-4e60-b3a1-8c46f207de92
 trajectory_path_control = @bind selected_path PlutoUI.Select(path_options);
 
-# ╔═╡ 9c4e17ab-2f60-4d83-b915-6e0a7d3c81f4
-trajectories = Trajectories.select(levels, selected_path)
-
 # ╔═╡ 7afe83d0-f91c-4d6d-80bb-82d634af59ed
 trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
 	[
@@ -903,6 +892,15 @@ trajectory_tracks_control = @bind selected_tracks PlutoUI.MultiSelect(
     default=default_tracks,
     size=4,
 );
+
+# ╔═╡ 5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30
+trace = Trajectories.catenate(simulation.sink)
+
+# ╔═╡ 24d5d19e-c9fd-4b4d-b90d-b2cc144586ce
+levels = Trajectories.lod(trace)
+
+# ╔═╡ 9c4e17ab-2f60-4d83-b915-6e0a7d3c81f4
+trajectories = Trajectories.select(levels, selected_path)
 
 # ╔═╡ 68f213e4-a64b-4aa1-bf77-9b131e657193
 trajectory_view = if run_simulation && !ismissing(dark_mode)
@@ -971,15 +969,6 @@ phase_track_control = @bind phase_track PlutoUI.Select(
     default=in("proteins", string.(track_options)) ? "proteins" : first(string.(track_options)),
 );
 
-# ╔═╡ 9e8abb2f-4531-4c57-a15f-547938cbd6e4
-phase_snapshot = if run_simulation && show_phase
-    Trajectories.snapshots(
-        Trajectories.select(trace, selected_path),
-        visible_genes,
-        phase_track,
-    )
-end
-
 # ╔═╡ be5ca395-d977-4082-a700-60730ba278df
 phase_components_control = @bind phase_components PlutoUI.Select(
     [2 => "2D", 3 => "3D"];
@@ -991,6 +980,15 @@ phase_coloring_control = @bind phase_coloring PlutoUI.Select(
     [:genes => "genes", :time => "time"];
     default=:genes,
 );
+
+# ╔═╡ 9e8abb2f-4531-4c57-a15f-547938cbd6e4
+phase_snapshot = if run_simulation && show_phase
+    Trajectories.snapshots(
+        Trajectories.select(trace, selected_path),
+        visible_genes,
+        phase_track,
+    )
+end
 
 # ╔═╡ ffa07386-4884-4f9d-9e2d-29da604aec87
 phase_projection = if !isnothing(phase_snapshot)
