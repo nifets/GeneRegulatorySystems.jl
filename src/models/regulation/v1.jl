@@ -793,10 +793,13 @@ function apply(a, r::Regulators, u, p)
     aggregate(a, r, u, p)
 end
 struct SwitchingRate{A, N}
+    name::Symbol
     k::SciML.ParameterIndex
     regulators::Regulators
     aggregation::A
     site::Int
+    active::Int
+    inactive::Int
     scale::Float64
     offset::Float64
     affect::SciML.Affect{N}
@@ -804,6 +807,14 @@ end
 
 occupancy(f::SwitchingRate, u) = @inbounds f.offset + f.scale * u[f.site]
 corner(f::SwitchingRate, lo, hi) = max(occupancy(f, f.scale > 0 ? lo : hi), 0.0)
+
+function active_fraction(f::SwitchingRate, u)
+    f.inactive == 0 && return Float64(u[f.active])
+    total = u[f.active] + u[f.inactive]
+    total > 0 ? u[f.active] / total : 0.0
+end
+
+SciML.observed_activity(f::SwitchingRate, u, _) = f.name => active_fraction(f, u)
 
 (f::SwitchingRate)(u, p, _) = p[f.k] * apply(f.aggregation, f.regulators, u, p) * occupancy(f, u)
 
@@ -813,6 +824,7 @@ SciML.urate(f::SwitchingRate, ulow, uhigh, p) =
     p[f.k] * apply(f.aggregation, f.regulators, ulow, p) * corner(f, uhigh, ulow)
 
 struct EquilibriumRate{A, B, N}
+    name::Symbol
     k::SciML.ParameterIndex
     kon::SciML.ParameterIndex
     koff::SciML.ParameterIndex
@@ -829,6 +841,9 @@ function active_fraction(f::EquilibriumRate, urepression, uactivation, p)
     koff = p[f.koff] * apply(f.aggregation_activation, f.activation, uactivation, p)
     kon / (kon + koff)
 end
+
+SciML.observed_activity(f::EquilibriumRate, u, p) =
+    f.name => active_fraction(f, u, u, p)
 
 (f::EquilibriumRate)(u, p, _) =
     @inbounds p[f.k] * active_fraction(f, u, u, p) * u[f.polymerases]
@@ -890,6 +905,7 @@ function promoter_rate(
     name === nothing && return nothing
     gene = genes[name]
     EquilibriumRate(
+        Symbol("$(name).activity"),
         indices.parameters[Symbol("$(name).trigger")],
         indices.parameters[Symbol("$(name).activation")],
         indices.parameters[Symbol("$(name).deactivation")],
@@ -928,10 +944,14 @@ function promoter_rate(
     end
 
     SwitchingRate(
+        Symbol("$(name).activity"),
         indices.parameters[Symbol("$(name).$(activating ? "activation" : "deactivation")")],
         regulators(indices, genes, gene, kind, regulation.slots, aggregate),
         aggregate,
-        site, scale, offset, affect,
+        site,
+        active,
+        gene.unique ? 0 : indices.species[Symbol("$(name).inactive")],
+        scale, offset, affect,
     )
 end
 

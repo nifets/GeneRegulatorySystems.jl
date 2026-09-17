@@ -454,6 +454,8 @@ function constant_rate_jumps(directions::AbstractVector, problem, system, ids, j
     ]
 end
 
+observed_activity(rate, u, p) = nothing
+
 # SymbolicUtils hash consing is thread unsafe
 # https://github.com/SciML/ModelingToolkit.jl/issues/3315
 const JUMP_PROBLEM_LOCK = ReentrantLock()
@@ -713,19 +715,46 @@ function Models.each_event(callback::Function, x::JumpState)
         previous = current
     end
 
-    for observable in ModelingToolkit.observables(system(Models.unwrap(x.f!)))
-        values = solution[observable]
-        isempty(values) && continue
+    p = x.integrator.p
+    model = Models.unwrap(x.f!)
+    covered = Set{Symbol}()
+    for jump in model.problem.constant_jumps
+        rate = jump.rate
+        first_observed = observed_activity(rate, first(solution.u), p)
+        isnothing(first_observed) && continue
+        name, observed = first_observed
+        name in covered && continue
+        push!(covered, name)
+        callback(first(solution.t), name, observed)
 
-        name = normalize_name(observable)
-        previous = first(values)
-        callback(first(solution.t), name, previous)
+        for (t, u) in Iterators.drop(zip(solution.t, solution.u), 1)
+            current = last(observed_activity(rate, u, p))
+            current != observed && callback(t, name, current)
+            observed = current
+        end
+    end
 
-        for (t, current) in Iterators.drop(zip(solution.t, values), 1)
-            if current != previous
-                callback(t, name, current)
+    sys = system(model)
+    uncovered = filter(
+        observable -> normalize_name(observable) ∉ covered,
+        ModelingToolkit.observables(sys),
+    )
+    if !isempty(uncovered)
+        evaluate = ModelingToolkit.build_explicit_observed_function(sys, uncovered)
+        uncovered_names = normalize_name.(uncovered)
+
+        (t, u), rest = Iterators.peel(zip(solution.t, solution.u))
+        prev = evaluate(u, p, t)
+        for i in eachindex(prev)
+            callback(t, uncovered_names[i], prev[i])
+        end
+
+        for (t, u) in rest
+            curr = evaluate(u, p, t)
+            for i in eachindex(curr)
+                curr[i] != prev[i] && callback(t, uncovered_names[i], curr[i])
             end
-            previous = current
+            prev = curr
         end
     end
 end
