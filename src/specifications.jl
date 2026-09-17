@@ -582,6 +582,10 @@ cast(::Type{Symbol}, x; _...) = Symbol(x)
 cast(T::Type{<:Real}, x::Real; _...) = convert(T, x)
 cast(T::Type{<:Real}, x::AbstractString; _...) = parse(T, x)
 cast(::Type{Vector{T}}, xs::Vector{T}; _...) where {T} = xs
+cast(::Type{Union{Nothing, T}}, x; context = nothing) where {T} = cast(T, x; context)
+cast(::Type{Union{Nothing, T}}, x::Union{Nothing, T}; _...) where {T} = x
+cast(::Type{Union{Nothing, T}}, x::AbstractDict{Symbol}; context) where {T} =
+    cast(T, x; context)
 cast(::Type{Vector{T}}, xs::AbstractVector; context = nothing) where {T} =
     cast.(T, xs; context)
 cast(::Type{Dict{Symbol, T}}, x::AbstractDict{Symbol}; context) where {T} =
@@ -606,6 +610,7 @@ representation(x::Integer) = x
 representation(x::AbstractFloat) = x
 representation(x::AbstractString) = x
 representation(x::Symbol) = string(x)
+representation(::Nothing) = nothing
 representation(x; simple = false, rest...) =
     representation(x, Val(simple); rest...)
 function representation(x, ::Val{true}; omit_defaults = Pair{Symbol, Any}[])

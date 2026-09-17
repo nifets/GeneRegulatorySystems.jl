@@ -69,7 +69,7 @@ using GeneRegulatorySystems
 The lowest-level way to construct a regulation model `f!` is to call a model constructor with a corresponding definition.
 For example,
 ```@example usage
-base_rates = Models.V1.EukaryoteBaseRates(
+base_rates = Models.V1.BaseRates(
     activation = 2.5,
     deactivation = 10.0,
     trigger = 6.6e-7,

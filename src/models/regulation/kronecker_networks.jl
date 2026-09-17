@@ -171,6 +171,7 @@ In JSON, a `KroneckerNetworks.Template` is specified as a JSON object
 ```
 {
     "base_rates": <base_rates>,
+    "species": [<species>...],
     "activation": <activation>,
     "repression": <repression>,
     "proteolysis": <proteolysis>
@@ -185,6 +186,9 @@ specified separately, and `build` will implicitly overlay them.
 
 `<base_rates>` specifies a [`BaseRatesTemplate`](@ref).
 
+If present, `[<species>...]` names the species every generated gene keeps, as
+described for [`V1.Gene`](@ref Models.V1.Gene).
+
 If present, `<activation>` must specify a [`ActivationNetworkTemplate`](@ref).
 
 If present, `<repression>` must specify a [`RepressionNetworkTemplate`](@ref).
@@ -197,6 +201,7 @@ contain a `"seed"` mapping if it is specified as part of a
 """
 @kwdef struct Template
     base_rates::BaseRatesTemplate
+    species::Union{Nothing, Vector{Symbol}} = nothing
     activation::Union{Some{ActivationNetworkTemplate}, Nothing} = nothing
     repression::Union{Some{RepressionNetworkTemplate}, Nothing} = nothing
     proteolysis::Union{Some{ProteolysisNetworkTemplate}, Nothing} = nothing
@@ -394,6 +399,7 @@ function Base.rand(
             V1.Gene(
                 name = gene_name(i; n, template.prefix),
                 base_rates = rand(randomness, template.base_rates);
+                template.species,
                 activation,
                 repression,
                 proteolysis,

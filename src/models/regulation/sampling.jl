@@ -58,7 +58,7 @@ Base.rand(randomness::AbstractRNG, d::Nonnegative{<:UnivariateDistribution}) =
 """
     BaseRatesTemplate
 
-Defines how to sample a [`V1.EukaryoteBaseRates`](@ref).
+Defines how to sample [`V1.BaseRates`](@ref).
 
 Base rates are sampled independently for each kind of rate.
 
@@ -80,25 +80,29 @@ In JSON, a `BaseRatesTemplate` is specified as a JSON object
 }
 ```
 where each `<...>` specifies a [`Nonnegative{<:UnivariateDistribution}`](@ref)
-from which that rate should be sampled from.
+from which that rate should be sampled from. `"processing"` and
+`"premrna_decay"` are optional, as in [`V1.BaseRates`](@ref).
 """
 @kwdef struct BaseRatesTemplate
     activation::Nonnegative{UnivariateDistribution}
     deactivation::Nonnegative{UnivariateDistribution}
     trigger::Nonnegative{UnivariateDistribution}
     transcription::Nonnegative{UnivariateDistribution}
-    processing::Nonnegative{UnivariateDistribution}
     translation::Nonnegative{UnivariateDistribution}
     abortion::Nonnegative{UnivariateDistribution}
-    premrna_decay::Nonnegative{UnivariateDistribution}
     mrna_decay::Nonnegative{UnivariateDistribution}
     protein_decay::Nonnegative{UnivariateDistribution}
+    processing::Union{Nothing, Nonnegative{UnivariateDistribution}} = nothing
+    premrna_decay::Union{Nothing, Nonnegative{UnivariateDistribution}} = nothing
 end
 
+sample(randomness::AbstractRNG, ::Nothing) = nothing
+sample(randomness::AbstractRNG, d::Nonnegative) = rand(randomness, d)
+
 Base.rand(randomness::AbstractRNG, template::BaseRatesTemplate) =
-    V1.EukaryoteBaseRates(; (
-        field => rand(randomness, getfield(template, field))
-        for field in fieldnames(V1.EukaryoteBaseRates)
+    V1.BaseRates(; (
+        field => sample(randomness, getfield(template, field))
+        for field in fieldnames(V1.BaseRates)
     )...)
 
 end

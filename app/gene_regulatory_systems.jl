@@ -38,9 +38,6 @@ md"""
 ## Logic
 """
 
-# ╔═╡ 2eb640a5-424b-4c20-ad79-87d2a1560b7c
-
-
 # ╔═╡ 76de62b9-be88-4b96-b801-b40872dfa0be
 md"""
 ### Schedule
@@ -166,7 +163,7 @@ dashboard_styles = @htl("""
                 minmax(160px, 0.75fr) minmax(0, 0.25fr) minmax(0, 2fr);
             grid-template-areas:
                 "header          header   header"
-                "schedule-header progress network"
+                "schedule-header progress network-header"
                 "left            left     network"
                 "left            left     trajectory";
             grid-template-rows: auto auto auto 1fr;
@@ -199,13 +196,14 @@ dashboard_styles = @htl("""
             grid-template-columns: minmax(0, 1fr);
             grid-template-areas:
                 "header" "schedule-header" "progress"
-                "network" "trajectory" "left";
+                "network-header" "network" "trajectory" "left";
         }
     }
 
     pluto-cell:has(.area-header) { grid-area: header; }
     pluto-cell:has(.area-left) { grid-area: left; }
     pluto-cell:has(.area-schedule-header) { grid-area: schedule-header; }
+    pluto-cell:has(.area-network-header) { grid-area: network-header; }
     pluto-cell:has(.area-network) { grid-area: network; }
     pluto-cell:has(.area-trajectory) { grid-area: trajectory; }
 
@@ -828,6 +826,12 @@ network_header = @htl("""
 </div>
 """);
 
+# ╔═╡ 4d802163-af7b-4255-a6a9-3b17d52a842f
+dashboard_area(
+    "network-header",
+    network_header
+)
+
 # ╔═╡ 4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
 cytoscape_graph = let
     graph = CytoscapeJS.Cytoscape(
@@ -848,10 +852,9 @@ gene_selection = Page.Shared("genes")
 # ╔═╡ aa943167-f20e-4349-a14b-d512c8005ab0
 network_view = Page.sync(gene_selection, Bonito.App(cytoscape_graph));
 
-# ╔═╡ 4d802163-af7b-4255-a6a9-3b17d52a842f
+# ╔═╡ 769e4fd2-71c3-418b-8838-0c8658dad724
 dashboard_area(
     "network",
-    network_header,
     dashboard_panel(network_view; height=600),
 )
 
@@ -1153,12 +1156,12 @@ dashboard_area("header", app_header)
 # ╠═b7e4c1a0-5d92-4f3e-8a61-2c9f0d7b4e83
 # ╠═c8f5d2b1-6ea3-4045-9b72-3da10e8c5f94
 # ╠═4d802163-af7b-4255-a6a9-3b17d52a842f
+# ╠═769e4fd2-71c3-418b-8838-0c8658dad724
 # ╠═5e913274-b08c-4366-b7ba-4c28e63b953a
 # ╠═8eb4f0d7-ef76-4ca7-a117-a48685c12667
 # ╟─34a8deb2-0db9-456c-ba38-eabc3254ab50
 # ╠═40d24905-5708-4580-9ae5-71e1c1de01a9
-# ╟─12e75652-a3fd-11f1-9335-a986ee44237f
-# ╠═2eb640a5-424b-4c20-ad79-87d2a1560b7c
+# ╠═12e75652-a3fd-11f1-9335-a986ee44237f
 # ╟─76de62b9-be88-4b96-b801-b40872dfa0be
 # ╠═c81d5f60-2a47-4e93-b6d1-5f39c284ae71
 # ╠═a2866674-5e4e-4738-b18e-90d122d2d161

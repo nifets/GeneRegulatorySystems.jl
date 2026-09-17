@@ -30,43 +30,9 @@ using ModelingToolkit
 using StatsBase
 
 """
-    ProkaryoteBaseRates
+    BaseRates
 
-Defines a prokaryotic [`Gene`](@ref) reaction cascade's base rates.
-
-# Specification
-
-They are specified in JSON as a JSON object
-```
-{
-    "activation": <...>,
-    "deactivation": <...>,
-    "trigger": <...>,
-    "transcription": <...>,
-    "translation": <...>,
-    "abortion": <...>,
-    "mrna_decay": <...>,
-    "protein_decay": <...>
-}
-```
-where `<...>` are JSON numbers setting the corresponding reaction rate
-constants.
-"""
-@kwdef struct ProkaryoteBaseRates
-    activation::Float64
-    deactivation::Float64
-    trigger::Float64
-    transcription::Float64
-    translation::Float64
-    abortion::Float64
-    mrna_decay::Float64
-    protein_decay::Float64
-end
-
-"""
-    EukaryoteBaseRates
-
-Defines a eukaryotic [`Gene`](@ref) reaction cascade's base rates.
+Defines a [`Gene`](@ref) reaction cascade's base rates.
 
 # Specification
 
@@ -86,20 +52,44 @@ They are specified in JSON as a JSON object
 }
 ```
 where `<...>` are JSON numbers setting the corresponding reaction rate
-constants.
+constants. `"processing"` and `"premrna_decay"` are optional; omitting them
+drops `premrnas` from the cascade, so that `transcription` directly produces
+`mrnas`.
 """
-@kwdef struct EukaryoteBaseRates
+@kwdef struct BaseRates
     activation::Float64
     deactivation::Float64
     trigger::Float64
     transcription::Float64
-    processing::Float64
     translation::Float64
     abortion::Float64
-    premrna_decay::Float64
     mrna_decay::Float64
     protein_decay::Float64
+    processing::Union{Nothing, Float64} = nothing
+    premrna_decay::Union{Nothing, Float64} = nothing
 end
+
+struct Stage
+    species::Symbol
+    birth::Symbol
+    death::Symbol
+    persists::Bool
+end
+
+const STAGES = (
+    Stage(:elongations, :trigger, :abortion, false),
+    Stage(:premrnas, :transcription, :premrna_decay, false),
+    Stage(:mrnas, :processing, :mrna_decay, true),
+    Stage(:proteins, :translation, :protein_decay, true),
+)
+
+available(rates::BaseRates, species::Symbol) = species !== :premrnas ||
+    (rates.processing !== nothing && rates.premrna_decay !== nothing)
+
+default_species(rates::BaseRates) = [
+    :active,
+    (stage.species for stage in STAGES if available(rates, stage.species))...,
+]
 
 @kwdef struct DirectRegulator
     from::Symbol
@@ -204,7 +194,7 @@ number specifying the decay reaction propensity.
 end
 
 """
-    Gene{BaseRates}
+    Gene
 
 Defines a single gene within a V1 `Definition`, including the reaction rate
 constants of its reaction cascade, and optionally inbound regulation and other
@@ -217,6 +207,7 @@ In JSON, a V1 `Gene` is specified as a JSON object
 {
     "name": <name>,
     "base_rates": <base_rates>,
+    "species": [<species>...],
     "unique": <unique>,
     "activation": <activation>,
     "repression": <repression>,
@@ -231,10 +222,9 @@ should not be specified.) The gene can then be referred to by name in other
 `Gene` specifications as a transcription factor (see below) or in additional
 mass-action reactions.
 
-`<base_rates>` specifies either [`ProkaryoteBaseRates`](@ref) or
-[`EukaryoteBaseRates`](@ref), depending on which [`build`](@ref) will
-instantiate a corresponding reaction cascade for this `Gene`. The cascade will
-include the following reactions:
+`<base_rates>` specifies [`BaseRates`](@ref), from which [`build`](@ref) will
+instantiate a reaction cascade for this `Gene`. The cascade will include the
+following reactions:
 ```
 @reaction_network begin
     trigger, active + \$polymerases --> active + elongations
@@ -251,8 +241,23 @@ Here, `polymerases`, `ribosomes` and `proteasomes` are chemical species that
 will be shared by all genes. `build` will then add reactions for the inter-gene
 regulation network, in which the `activation` and `deactivation` base rates will
 be respectively tempered by repression and activation links as defined below.
-For prokaryotic genes, the `processing` and `premrna_decay` reactions will be
-omitted, and `transcription` will directly produce `mrnas` instead.
+
+If present, `[<species>...]` must be a JSON array naming a subset of
+`"active"`, `"elongations"`, `"premrnas"`, `"mrnas"` and `"proteins"`; it
+defaults to all of the ones the base rates provide, and may also be given once
+for the whole model alongside `"genes"`. Omitting a species removes it from the
+cascade and merges the reactions that produced and consumed it into one, whose
+rate constant is scaled to preserve the steady-state flux reaching the next
+species: by `k_next / (k_next + k_loss)` where the omitted species is consumed
+(`elongations`, `premrnas`), and by `k_next / k_loss` where it acts as a
+catalyst (`mrnas`). This preserves steady-state means but not the dwell time the
+omitted species contributed, so a reduced gene is burstier than the full one.
+
+Omitting `"active"` puts the promoter in quasi-steady state instead, folding its
+occupancy into the `trigger` rate as before, and is incompatible with
+`"unique": false`. Other genes may regulate this one by naming it, which refers
+to the last species it keeps, or by naming a species explicitly as
+`"<gene>.<species>"`.
 
 If present, `<unique>` must be a JSON boolean, otherwise it defaults to `true`.
 Setting it to `false` makes the promoter's copy number a dynamic quantity
@@ -288,23 +293,66 @@ and `<repression>`.
 If present, `<proteolysis>` must specify inbound regulation by
 [`Proteolysis`](@ref).
 """
-@kwdef struct Gene{BaseRates}
+@kwdef struct Gene
     name::Symbol
     base_rates::BaseRates
+    species::Union{Nothing, Vector{Symbol}} = nothing
     unique::Bool = true
     activation::Activation = Activation()
     repression::Repression = Repression()
     proteolysis::Proteolysis = Proteolysis()
 end
 
-Gene(gene::Gene{BaseRates}; name) where {BaseRates} =
-    Gene{BaseRates}(;
-        name,
-        gene.base_rates,
-        gene.activation,
-        gene.repression,
-        gene.proteolysis,
-    )
+Gene(gene::Gene; kwargs...) = Gene(;
+    (field => getfield(gene, field) for field in fieldnames(Gene))...,
+    kwargs...,
+)
+
+species_of(gene::Gene) = @something(gene.species, default_species(gene.base_rates))
+
+keeps(gene::Gene, species::Symbol) = gene.species === nothing ?
+    available(gene.base_rates, species) : species in gene.species
+
+switching(gene::Gene) = keeps(gene, :active)
+
+function first_transcript(gene::Gene)
+    for stage in STAGES
+        keeps(gene, stage.species) && return stage.species
+    end
+end
+
+function last_species(gene::Gene)
+    for stage in reverse(STAGES)
+        keeps(gene, stage.species) && return stage.species
+    end
+    :active
+end
+
+regulator_name(gene::Gene) = Symbol("$(gene.name).$(last_species(gene))")
+
+collapse_factor(dropped::Stage, next::Stage, rates::BaseRates) = collapse_factor(
+    getfield(rates, next.birth), getfield(rates, dropped.death), dropped.persists)
+collapse_factor(::Nothing, ::Nothing, ::Bool) = 1.0
+collapse_factor(out::Float64, loss::Float64, persists::Bool) =
+    persists ? out / loss : out / (out + loss)
+
+function rate_values(gene::Gene)
+    rates = gene.base_rates
+    effective = Dict{Symbol, Float64}()
+    previous = 0
+    for (i, stage) in enumerate(STAGES)
+        keeps(gene, stage.species) || continue
+        birth = STAGES[previous + 1].birth
+        effective[birth] = foldl(
+            (rate, j) -> rate * collapse_factor(STAGES[j], STAGES[j + 1], rates),
+            (previous + 1):(i - 1);
+            init = getfield(rates, birth),
+        )
+        effective[stage.death] = getfield(rates, stage.death)
+        previous = i
+    end
+    effective
+end
 
 """
     Definition
@@ -351,7 +399,6 @@ the system is not empty.
     proteasomes::Symbol = :proteasomes
     genes::Vector{Gene} = Gene[]
     reactions::Vector{Models.Reaction} = Models.Reaction[]
-    promoter_model::Symbol = :switching
 end
 
 Definition(base::Definition; kwargs...) = Definition(;
@@ -368,25 +415,17 @@ cast(::Type{Vector{Gene}}, xs::AbstractVector; context) = [
     for (i, x) in enumerate(xs)
 ]
 
-function cast(::Type{Gene}, x::AbstractDict{Symbol}; context)
-    Rates =
-        if haskey(x[:base_rates], :processing)
-            EukaryoteBaseRates
-        else
-            ProkaryoteBaseRates
-        end
-
-    @invoke cast(
-        Gene{Rates}::Type,
-        # Ensure we descend on these, even if they are not in x, because we will
-        # look up model-wide defaults further down:
-        merge(
-            Dict(:activation => empty(x), :repression => empty(x)),
-            x
-        )::AbstractDict{Symbol};
-        context,
-    )
-end
+cast(::Type{Gene}, x::AbstractDict{Symbol}; context) = @invoke cast(
+    Gene::Type,
+    # Ensure we descend on these, even if they are not in x, because we will
+    # look up model-wide defaults further down:
+    merge(
+        Dict(:activation => empty(x), :repression => empty(x)),
+        haskey(context, :species) ? Dict(:species => context[:species]) : empty(x),
+        x
+    )::AbstractDict{Symbol};
+    context,
+)
 
 cast(T::Type{<:Regulation}, xs::AbstractVector; context) =
     cast(T, Dict(:slots => xs); context)
@@ -448,8 +487,7 @@ regulation_representation(slots, ::Base.Fix2{typeof(genmean), P}) where {P} =
         :p => P,
     )
 
-representation(x::ProkaryoteBaseRates) = representation(x, simple = true)
-representation(x::EukaryoteBaseRates) = representation(x, simple = true)
+representation(x::BaseRates) = representation(x, simple = true, omit_defaults = [:processing => nothing, :premrna_decay => nothing])
 representation(x::DirectRegulator) = representation(x, simple = true)
 representation(x::HillRegulator) =
     representation(x, simple = true, omit_defaults = [:k => -1.0, :w => 1.0])
@@ -465,6 +503,7 @@ representation(x::Gene) = representation(
         :repression => [],
         :proteolysis => [],
         :unique => true,
+        :species => nothing,
     ],
 )
 representation(x::Definition) = Dict{Symbol, Any}(
@@ -482,15 +521,15 @@ representation(x::Definition) = Dict{Symbol, Any}(
 )
 
 function Models.describe(definition::Definition)
-    genes = Set(gene.name for gene in definition.genes)
-    regulator(name) = name in genes ? Symbol("$(name).proteins") : name
+    genes = Dict(gene.name => gene for gene in definition.genes)
+    regulator(name) = haskey(genes, name) ? regulator_name(genes[name]) : name
     function modulation(gene, kind, from)
-        if definition.promoter_model === :equilibrium
-            edge_kind = kind === :activation ? :promotes : :inhibits
-            reaction = Symbol("$(gene).trigger")
-        else
+        if switching(genes[gene])
             edge_kind = :inhibits
             reaction = Symbol("$(gene).$(kind === :activation ? "deactivation" : "activation")")
+        else
+            edge_kind = kind === :activation ? :promotes : :inhibits
+            reaction = Symbol("$(gene).trigger")
         end
         (; kind=edge_kind, from=regulator(from), to=reaction)
     end
@@ -543,7 +582,13 @@ function annotate(reaction, kind::Symbol; owner=nothing, metadata...)
     reaction
 end
 
-function cascade(definition::Gene{Rates}, ::Val{PromoterModel}; polymerases, ribosomes, proteasomes) where {Rates, PromoterModel}
+death_reaction(::Val{:elongations}, x, k; polymerases, _...) =
+    Reaction(k, [x], [polymerases])
+death_reaction(::Val{:proteins}, x, k; proteasomes, _...) =
+    Reaction(k, [x, proteasomes], [proteasomes])
+death_reaction(::Val, x, k; _...) = Reaction(k, [x], nothing)
+
+function cascade(definition::Gene; polymerases, ribosomes, proteasomes, t)
     name = definition.name
     rxs = Reaction[]
 
@@ -554,32 +599,46 @@ function cascade(definition::Gene{Rates}, ::Val{PromoterModel}; polymerases, rib
         parameters=Dict(:rate => Symbol("$(name).$(kind)"))
     ))
 
-    if PromoterModel === :switching
-        add(:trigger, @reaction trigger, active + $polymerases --> active + elongations)
+    previous = 0
+    for (i, stage) in enumerate(STAGES)
+        keeps(definition, stage.species) || continue
+        target = species_variable(stage.species; t)
+        catalysts = stage.species === :proteins ? (ribosomes,) : ()
+
+        if previous == 0
+            if switching(definition)
+                active = species_variable(:active; t)
+                held = stage.species === :elongations
+                add(STAGES[1].birth, Reaction(make_parameter(STAGES[1].birth),
+                    [active, polymerases, catalysts...],
+                    [active, target, catalysts...,
+                        (held ? () : (polymerases,))...]))
+            end
+        else
+            kind = STAGES[previous + 1].birth
+            source = species_variable(STAGES[previous].species; t)
+            released = STAGES[previous].species === :elongations ? (polymerases,) : ()
+            add(kind, Reaction(make_parameter(kind),
+                [source, catalysts...],
+                [target, catalysts..., released...,
+                    (STAGES[previous].persists ? (source,) : ())...]))
+        end
+
+        add(stage.death, death_reaction(Val(stage.species), target,
+            make_parameter(stage.death); polymerases, proteasomes))
+        previous = i
     end
 
-    if Rates === ProkaryoteBaseRates
-        add(:transcription, @reaction transcription, elongations --> mrnas + $polymerases)
-    elseif Rates === EukaryoteBaseRates
-        add(:transcription, @reaction transcription, elongations --> premrnas + $polymerases)
-        add(:processing, @reaction processing, premrnas --> mrnas)
-        add(:premrna_decay, @reaction premrna_decay, premrnas --> 0)
-    end
-
-    add(:translation, @reaction translation, mrnas + $ribosomes --> mrnas + proteins + $ribosomes),
-    add(:abortion, @reaction abortion, elongations --> $polymerases),
-    add(:mrna_decay, @reaction mrna_decay, mrnas --> 0),
-    add(:protein_decay, @reaction protein_decay, proteins + $proteasomes --> $proteasomes)
-
-    ReactionSystem(rxs, default_t(); name)
+    ReactionSystem(rxs, t; name)
 end
 
-function gene(definition::Gene; polymerases, ribosomes, proteasomes, t, promoter_model)
-    result = cascade(definition, Val(promoter_model); polymerases, ribosomes, proteasomes)
-    if promoter_model === :switching && !definition.unique
-        result = extend(result, @network_component (@species inactive(t);))
-    end
-    result
+function gene(definition::Gene; polymerases, ribosomes, proteasomes, t)
+    result = cascade(definition; polymerases, ribosomes, proteasomes, t)
+    switching(definition) || return result
+    first_transcript(definition) === nothing &&
+        (result = extend(result, @network_component (@species active(t);)))
+    definition.unique && return result
+    extend(result, @network_component (@species inactive(t);))
 end
 
 function species_variable(name::Symbol; t)
@@ -591,9 +650,6 @@ function observed_variable(name::Symbol; t)
     name = SciML.symbolic_name(name)
     only(@variables $name(t))
 end
-
-species_reference(name::Symbol; t, genes) =
-    haskey(genes, name) ? genes[name].proteins : species_variable(name; t)
 
 function hill2(X, v, K, n)
     m = abs(n)
@@ -609,8 +665,10 @@ make_parameter(name::Symbol, default::Float64) = Symbolics.setmetadata(make_para
 
 function each_parameter(callback::Function, definition::Definition)
     for g in definition.genes
-        for kind in fieldnames(typeof(g.base_rates))
-            callback(Symbol("$(g.name).$(kind)"), getfield(g.base_rates, kind))
+        for kind in fieldnames(BaseRates)
+            rate = getfield(g.base_rates, kind)
+            rate === nothing ||
+                callback(Symbol("$(g.name).$(kind)"), rate)
         end
         for slot in g.activation.slots
             callback(Symbol("$(g.name).activation.$(slot.from).at"), slot.at)
@@ -661,7 +719,7 @@ Models.remake(definition::Definition, parameters::AbstractDict{Symbol, <:Real}) 
 function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
     T = typeof(gene.base_rates)
     Gene(;
-        gene.name, gene.unique,
+        gene.name, gene.unique, gene.species,
         base_rates = T(; (
             f => get(parameters, Symbol("$(gene.name).$(f)"), getfield(gene.base_rates, f))
             for f in fieldnames(T)
@@ -728,9 +786,12 @@ function aggregate(f::Base.Fix2{typeof(genmean)}, r::Regulators, u, p)
     (sum(j -> r.w[j] * hill(r, j, u, p) ^ q, eachindex(r.w)) / total) ^ inv(q)
 end
 
-apply(a, r::Regulators, u, p) =
-    isempty(r.source) ? 1.0 : aggregate(a, r, u, p)
-
+function apply(a, r::Regulators, u, p)
+    n = length(r.source)
+    n == 0 && return 1.0
+    n == 1 && return hill(r, 1, u, p)
+    aggregate(a, r, u, p)
+end
 struct SwitchingRate{A, N}
     k::SciML.ParameterIndex
     regulators::Regulators
@@ -780,7 +841,7 @@ SciML.urate(f::EquilibriumRate, ulow, uhigh, p) =
 function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slots, aggregate)
     aggregate isa typeof(one ∘ typeof ∘ first) && return Regulators(
         Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], Float64[])
-    regulator(from) = haskey(genes, from) ? Symbol("$(from).proteins") : from
+    regulator(from) = haskey(genes, from) ? regulator_name(genes[from]) : from
     Regulators(
         [indices.species[regulator(slot.from)] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).at")] for slot in slots],
@@ -800,25 +861,32 @@ function promoter_rate(jump, genes, definition::Definition, indices::SciML.Indic
         Tuple(Int8(change) for (_, change) in net_stoich),
     )
 
-    promoter_rate(
-        Val(definition.promoter_model), net_stoich, affect,
-        genes, definition, indices,
+    @something(
+        promoter_rate(Val(:switching), net_stoich, affect, genes, definition, indices),
+        promoter_rate(Val(:equilibrium), net_stoich, affect, genes, definition, indices),
+        Some(nothing),
     )
 end
 
 # the MTK gernerated jumps are not labelled so we need to reverse engineer which gene they belong to
-function gene_of(net_stoich::Vector{Tuple{Symbol, Int}}, kind)
-    suffix = ".$(kind)"
-    for (name, _) in net_stoich
-        text = String(name)
-        endswith(text, suffix) && return Symbol(chopsuffix(text, suffix))
+function gene_of(match, net_stoich::Vector{Tuple{Symbol, Int}}, genes)
+    for (species, change) in net_stoich
+        text = String(species)
+        separator = findlast('.', text)
+        separator === nothing && continue
+        name = Symbol(SubString(text, 1, separator - 1))
+        haskey(genes, name) || continue
+        match(genes[name], Symbol(SubString(text, separator + 1)), change) &&
+            return name
     end
 end
 
 function promoter_rate(
     ::Val{:equilibrium}, net_stoich, affect, genes, definition, indices,
 )
-    name = gene_of(net_stoich, "elongations")
+    name = gene_of(net_stoich, genes) do gene, kind, change
+        change > 0 && !switching(gene) && kind === first_transcript(gene)
+    end
     name === nothing && return nothing
     gene = genes[name]
     EquilibriumRate(
@@ -839,7 +907,7 @@ end
 function promoter_rate(
     ::Val{:switching}, net_stoich, affect, genes, definition, indices,
 )
-    name = gene_of(net_stoich, "active")
+    name = gene_of((_, kind, _) -> kind === :active, net_stoich, genes)
     name === nothing && return nothing
     gene = genes[name]
     active_name = Symbol("$(name).active")
@@ -884,6 +952,10 @@ function regulation(
     t::Num,
 )
 
+    reference = Dict(g.name => regulator_name(g) for g in definition.genes)
+    regulator_of(from) = species_variable(get(reference, from, from); t)
+    effective = Dict(g.name => rate_values(g) for g in definition.genes)
+
     inactive(target::Gene) =
         if target.unique
             1 - genes[target.name].active
@@ -908,7 +980,7 @@ function regulation(
         make_parameter(Symbol("$(target.name).activation"), target.base_rates.activation)
         * aggregate(target.repression,
             (  # ^ arguments and value go towards 0 as repression increases
-                hill2(species_reference(from; t, genes), 1.0,
+                hill2(regulator_of(from), 1.0,
                     make_parameter(Symbol("$(target.name).repression.$(from).at"), at),
                     make_parameter(Symbol("$(target.name).repression.$(from).k"), k))
                 for (; from, k, at) in target.repression.slots
@@ -921,7 +993,7 @@ function regulation(
         make_parameter(Symbol("$(target.name).deactivation"), target.base_rates.deactivation)
         * aggregate(target.activation,
             (  # ^ arguments and value go towards 0 as activation increases
-                hill2(species_reference(from; t, genes), 1.0,
+                hill2(regulator_of(from), 1.0,
                     make_parameter(Symbol("$(target.name).activation.$(from).at"), at),
                     make_parameter(Symbol("$(target.name).activation.$(from).k"), k))
                 for (; from, k, at) in target.activation.slots
@@ -937,7 +1009,7 @@ function regulation(
     end
 
     function promoter_activity(target)
-        if definition.promoter_model === :equilibrium
+        if !switching(target)
             p_active(target)
         elseif target.unique
             genes[target.name].active
@@ -958,7 +1030,8 @@ function regulation(
     activation_rate(target::Gene) = k_on(target) * inactive(target)
     deactivation_rate(target::Gene) = k_off(target) * genes[target.name].active
 
-    trigger_rate(target::Gene) = make_parameter(Symbol("$(target.name).trigger"), target.base_rates.trigger)
+    trigger_rate(target::Gene) =
+        make_parameter(Symbol("$(target.name).trigger"), effective[target.name][:trigger])
 
 
     # Regulation for the whole network:
@@ -966,7 +1039,7 @@ function regulation(
         # For each gene...
         mapreduce(vcat, definition.genes, init = Reaction[]) do target::Gene
             vcat(
-                if definition.promoter_model === :switching
+                if switching(target)
                     [
                         # ...activation (by tempering promoter deactivation)
                         annotate(Reaction(
@@ -975,7 +1048,7 @@ function regulation(
                             target.unique ? nothing : [genes[target.name].inactive],
                             only_use_rate = true;
                             metadata = [:propensity_directions => [
-                                (species_reference(slot.from; t, genes) => Int8(-1) for slot in target.activation.slots)...
+                                (regulator_of(slot.from) => Int8(-1) for slot in target.activation.slots)...
                                 genes[target.name].active => Int8(1)
                             ]]
                         ), :deactivation;
@@ -989,7 +1062,7 @@ function regulation(
                             [genes[target.name].active],
                             only_use_rate = true;
                             metadata = [:propensity_directions => [
-                                (species_reference(slot.from; t, genes) => Int8(-1) for slot in target.repression.slots)...
+                                (regulator_of(slot.from) => Int8(-1) for slot in target.repression.slots)...
                                 (target.unique ? genes[target.name].active => Int8(-1) :
                                                  genes[target.name].inactive => Int8(1))
                             ]]
@@ -997,17 +1070,23 @@ function regulation(
                             owner=target.name,
                             parameters=Dict(:rate => Symbol("$(target.name).activation")))
                     ]
-                elseif definition.promoter_model === :equilibrium
+                else
+                    transcript = first_transcript(target)
                     polymerases = species_variable(definition.polymerases; t)
+                    catalysts = transcript === :proteins ?
+                        [species_variable(definition.ribosomes; t)] : []
+                    held = transcript === :elongations
                     directions = [
                         polymerases => Int8(1)
-                        (species_reference(slot.from; t, genes) => Int8(1) for slot in target.activation.slots)...
-                        (species_reference(slot.from; t, genes) => Int8(-1) for slot in target.repression.slots)...
+                        (catalyst => Int8(1) for catalyst in catalysts)...
+                        (regulator_of(slot.from) => Int8(1) for slot in target.activation.slots)...
+                        (regulator_of(slot.from) => Int8(-1) for slot in target.repression.slots)...
                     ]
                     annotate(Reaction(
                         trigger_rate(target) * p_active(target),
-                        [polymerases],
-                        [genes[target.name].elongations];
+                        [polymerases, catalysts...],
+                        [getproperty(genes[target.name], transcript), catalysts...,
+                            (held ? () : (polymerases,))...];
                         metadata = [:propensity_directions => directions]
                     ), :trigger;
                         owner=target.name,
@@ -1015,7 +1094,7 @@ function regulation(
                 end,
                 # ...repression (by proteolysis)
                 map(target.proteolysis.slots) do (; from, k)
-                    proteases = species_reference(from; t, genes)
+                    proteases = regulator_of(from)
                     proteins = genes[target.name].proteins
                     k_symbolic = make_parameter(Symbol("$(target.name).proteolysis.$(from).k"), k)
                     reaction =
@@ -1043,8 +1122,8 @@ function regulation(
             annotate(Reaction(
                 # need to use :k⁺ instead of :k⁺ because ₊ is used as a scope separator in MTK
                 make_parameter(Symbol("reaction.$(name).k⁺"), k⁺),
-                species_reference.(keys(from.counts); t, genes),
-                species_reference.(keys(to.counts); t, genes),
+                regulator_of.(keys(from.counts)),
+                regulator_of.(keys(to.counts)),
                 collect(values(from.counts)),
                 collect(values(to.counts)),
             ), :reaction;
@@ -1060,8 +1139,8 @@ function regulation(
         [
             annotate(Reaction(
                 make_parameter(Symbol("reaction.$(name).k⁻"), k⁻),
-                species_reference.(keys(to.counts); t, genes),
-                species_reference.(keys(from.counts); t, genes),
+                regulator_of.(keys(to.counts)),
+                regulator_of.(keys(from.counts)),
                 collect(values(to.counts)),
                 collect(values(from.counts)),
             ), :reaction;
@@ -1110,21 +1189,21 @@ relative to protein birth/death, so most of RSSA's saving is retained.
 function promoter_bracket_data(system)
     names = [String(ModelingToolkit.getname(s)) for s in ModelingToolkit.unknowns(system)]
     exact = [endswith(n, "active") for n in names]  # matches `active` and `inactive`
-    # The vector-valued accessors in JumpProcesses dispatch on the field type
-    # being exactly `AbstractVector`, so the type parameters are spelled out.
-    BracketData{AbstractVector{Float64}, AbstractVector{Int}}(
+    BracketData{Vector{Float64}, Vector{Int}}(
         [e ? 0.0 : 0.1 for e in exact],
         [e ? 0 : 25 for e in exact],
         [e ? 0 : 4 for e in exact],
     )
 end
 
-hybrid(definition::Definition; exact = RSSACR(), dt = Inf, kwargs...) =
-    JumpProcesses.HybridTau(exact, blending_policy(definition), dt; kwargs...)
+hybrid(definition::Definition; exact = RSSACR(), dt = Inf, nc = nothing, kwargs...) =
+    JumpProcesses.HybridTau(exact,
+        nc === nothing ? blending_policy(definition) : JumpProcesses.CriticalBlend(nc),
+        dt; kwargs...)
 
 blending_policy(definition::Definition) =
-    definition.promoter_model === :switching ?
-    JumpProcesses.CriticalBlend(all(gene -> gene.unique, definition.genes) ? 2 : 10) :
+    any(switching, definition.genes) ?
+    JumpProcesses.CriticalBlend(all(gene -> gene.unique, definition.genes) ? 2 : 11) :
     JumpProcesses.AlwaysLeap()
 
 resolve_method(method::JumpProcesses.AbstractAggregatorAlgorithm, system, definition) =
@@ -1137,22 +1216,22 @@ function resolve_method(method::AbstractDict{Symbol}, system, definition)
     name = Symbol(get(method, :name, "default"))
     name === :HybridTau ||
         error("only \"HybridTau\" takes options; got $(name)")
+    options = (; (k => v for (k, v) in method if k !== :name && k !== :exact)...)
     hybrid(definition;
         exact = pick_method(system; method = Symbol(get(method, :exact, "RSSACR")))(),
-        dt = get(method, :dt, Inf),
-        epsilon = get(method, :epsilon, 0.05))
+        options...)
 end
 
 # `bounds = false` skips deriving the propensity directions, which only the
 # symbolic path needs -- the fast path carries its own bounds.
 function aggregator_options(algorithm::JumpProcesses.HybridTau, reaction_system,
         jump_system, definition; bounds = true)
-    if definition.promoter_model === :switching &&
+    if any(switching, definition.genes) &&
        algorithm.policy isa JumpProcesses.CriticalBlend
         nc = algorithm.policy.nc
         copies = all(gene -> gene.unique, definition.genes) ? 1 : 10
-        nc <= copies &&
-            @warn "HybridTau with promoter_model = :switching and CriticalBlend(nc = $nc) leaps transcription with the promoter gate held fixed over the window. Pass CriticalBlend($(copies + 1)) or larger, or use `V1.hybrid(definition)`."
+        minimum(nc) <= copies &&
+            @warn "HybridTau with `active` genes and CriticalBlend(nc = $nc) leaps transcription with the promoter gate held fixed over the window. Pass CriticalBlend($(copies + 1)) or larger, or use `V1.hybrid(definition)`."
     end
     aggregator_options(typeof(algorithm.exact), reaction_system, jump_system, definition;
         bounds)
@@ -1169,7 +1248,7 @@ function aggregator_options(algorithm, reaction_system, jump_system, definition;
     bounds || return nothing, algorithm in (RSSA, RSSACR) ?
         (; bracket_data = promoter_bracket_data(jump_system)) : (;)
 
-    if definition.promoter_model === :equilibrium
+    if any(!switching, definition.genes)
         all(definition.genes) do gene
             activators = Set(slot.from for slot in gene.activation.slots)
             repressors = Set(slot.from for slot in gene.repression.slots)
@@ -1240,7 +1319,8 @@ systems (having less than 100 species and less than 1000 reactions), and
 `RSSACR` otherwise.
 
 `"HybridTau"` selects the hybrid exact/tau-leaping aggregator, with a blending
-policy chosen from `promoter_model`. It may instead be given as a JSON object
+policy chosen from whether any gene keeps `active`. It may instead be given as a
+JSON object
 ```
 {"name": "HybridTau", "exact": <exact>, "epsilon": <epsilon>, "dt": <dt>}
 ```
@@ -1270,8 +1350,6 @@ function build(definition::Definition;
     method::Union{Symbol, AbstractDict{Symbol},
         JumpProcesses.AbstractAggregatorAlgorithm} = :default,
     compilation::Symbol = :fast)
-    allequal(typeof.(definition.genes)) ||
-        error("mixing eukaryotic and prokaryotic genes is forbidden")
 
     let names = [rxn.name for rxn in definition.reactions]
         duplicates = unique([n for n in names if count(==(n), names) > 1])
@@ -1279,10 +1357,22 @@ function build(definition::Definition;
             error("reaction names must be unique; duplicated: ", join(duplicates, ", "))
     end
 
-    definition.promoter_model in (:switching, :equilibrium) ||
-        error("promoter_model must be :switching or :equilibrium, got $(definition.promoter_model)")
-    definition.promoter_model === :equilibrium && any(g -> !g.unique, definition.genes) &&
-        error("equilibrium promoter model does not support `unique=false` genes")
+    for gene in definition.genes
+        chosen = species_of(gene)
+        isempty(chosen) &&
+            error("gene $(gene.name) must keep at least one species")
+        unknown = setdiff(chosen, default_species(gene.base_rates))
+        isempty(unknown) ||
+            error("gene $(gene.name) cannot keep $(join(unknown, ", ")); available: ",
+                join(default_species(gene.base_rates), ", "))
+        switching(gene) || gene.unique ||
+            error("gene $(gene.name) without `active` does not support `unique=false`")
+        (gene.base_rates.processing === nothing) ==
+        (gene.base_rates.premrna_decay === nothing) ||
+            error("gene $(gene.name) must set `processing` and `premrna_decay` together")
+        isempty(gene.proteolysis.slots) || :proteins in chosen ||
+            error("gene $(gene.name) cannot be regulated by proteolysis without `proteins`")
+    end
 
     t = default_t()
     polymerases = species_variable(definition.polymerases; t)
@@ -1296,7 +1386,6 @@ function build(definition::Definition;
             ribosomes = ParentScope(ribosomes),
             proteasomes = ParentScope(proteasomes);
             t,
-            definition.promoter_model
         )
         for g in definition.genes
     )
@@ -1307,11 +1396,10 @@ function build(definition::Definition;
         observed,
         systems=collect(values(genes)),
         initial_conditions=Dict(
-            getproperty(genes[g.name], kind) => getfield(g.base_rates, kind)
+            getproperty(genes[g.name], kind) => value
             for g in definition.genes
-            for kind in fieldnames(typeof(g.base_rates))
-            if kind ∉ (:activation, :deactivation) &&
-                (definition.promoter_model === :switching || kind !== :trigger)
+            for (kind, value) in rate_values(g)
+            if switching(g) || kind !== :trigger
         )
     )
     reaction_system = complete(reaction_system)
@@ -1376,7 +1464,7 @@ function knockout(definition::Definition; genes)
     remaining = filter(g -> g.name ∉ knocked_out, definition.genes)
     cleaned = map(remaining) do gene
         Gene(;
-            gene.name, gene.base_rates, gene.unique,
+            gene.name, gene.base_rates, gene.unique, gene.species,
             activation = Activation(;
                 gene.activation.aggregate,
                 slots = filter(s -> s.from ∉ knocked_out, gene.activation.slots),

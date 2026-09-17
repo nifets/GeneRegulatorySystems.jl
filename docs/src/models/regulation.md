@@ -70,8 +70,7 @@ Models.V1
 Models.V1.build
 Models.V1.Definition
 Models.V1.Gene
-Models.V1.EukaryoteBaseRates
-Models.V1.ProkaryoteBaseRates
+Models.V1.BaseRates
 Models.V1.Activation
 Models.V1.Repression
 Models.V1.Proteolysis
