@@ -519,10 +519,11 @@ function (f!::Schedule{Scope})(
     if haskey(bindings, :to) && bindings[Symbol("^to")].path == f!.path
         Δt = min(Δt, bindings[:to])
         verbose && @logmsg Progress :preparing at = f!.path todo = Δt
+        origin = Models.t(x)
         if verbose && consolidate_progress(step!)
             consolidated_progress =
-                (message; todo = nothing, done = 0, _...) ->
-                    @logmsg Progress message at = f!.path todo done
+                (message; todo = nothing, done = origin, _...) ->
+                    @logmsg Progress message at = f!.path todo done = done - origin
         end
         done = 0.0
         while 0.0 < Δt
@@ -543,7 +544,7 @@ function (f!::Schedule{Scope})(
             if consolidated_progress === nothing
                 @logmsg Progress :repeating at = f!.path done
             else
-                consolidated_progress(:advancing; done, path)
+                consolidated_progress(:advancing; done = Models.t(x), path)
             end
         end
     else

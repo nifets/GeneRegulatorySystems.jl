@@ -263,7 +263,7 @@ function discrete_problem(system, op, tspan; kwargs...)
     )
     SciMLBase.DiscreteProblem(
         SciMLBase.DiscreteFunction{true, true}(
-            DiffEqBase.DISCRETE_INPLACE_DEFAULT;
+            DiffEqBase.DISCRETE_INPLACE_DEFAULT; # no dynamics between jumps
             sys = system,
             observed = MTKB.ObservedFunctionCache(system),
             initialization_data = get(inner.kwargs, :initialization_data, nothing)
@@ -386,10 +386,7 @@ crj_stoichiometry(ids, jumps) = [
 
 function stoichiometry(affect::ModelingToolkit.Equation)
     change = ModelingToolkit.value(ModelingToolkit.Symbolics.expand(
-        ModelingToolkit.Symbolics.substitute(
-            ModelingToolkit.value(affect.rhs),
-            Dict(MTKB.Pre(ModelingToolkit.value(affect.lhs)) => 0)
-        )
+        ModelingToolkit.value(affect.rhs) - MTKB.Pre(ModelingToolkit.value(affect.lhs))
     ))
     change isa Number || error(
         "affect `$(affect)` does not change its species by a constant amount"
