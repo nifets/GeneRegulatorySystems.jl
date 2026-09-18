@@ -858,7 +858,7 @@ function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slo
         Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], Float64[])
     regulator(from) = haskey(genes, from) ? regulator_name(genes[from]) : from
     Regulators(
-        [indices.species[regulator(slot.from)] for slot in slots],
+        [indices.unknowns[regulator(slot.from)] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).at")] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).k")] for slot in slots],
         [slot.w for slot in slots],
@@ -872,7 +872,7 @@ function promoter_rate(jump, genes, definition::Definition, indices::SciML.Indic
         for affect in jump.affect!
     ]
     affect = SciML.Affect(
-        Tuple(indices.species[species] for (species, _) in net_stoich),
+        Tuple(indices.unknowns[species] for (species, _) in net_stoich),
         Tuple(Int8(change) for (_, change) in net_stoich),
     )
 
@@ -915,7 +915,7 @@ function promoter_rate(
             gene.activation.aggregate),
         gene.repression.aggregate,
         gene.activation.aggregate,
-        indices.species[definition.polymerases],
+        indices.unknowns[definition.polymerases],
         affect,
     )
 end
@@ -927,7 +927,7 @@ function promoter_rate(
     name === nothing && return nothing
     gene = genes[name]
     active_name = Symbol("$(name).active")
-    active = indices.species[active_name]
+    active = indices.unknowns[active_name]
     activating = first(change for (species, change) in net_stoich
         if species === active_name) > 0
 
@@ -940,7 +940,7 @@ function promoter_rate(
     elseif gene.unique
         active, -1.0, 1.0
     else
-        indices.species[Symbol("$(name).inactive")], 1.0, 0.0
+        indices.unknowns[Symbol("$(name).inactive")], 1.0, 0.0
     end
 
     SwitchingRate(
@@ -950,7 +950,7 @@ function promoter_rate(
         aggregate,
         site,
         active,
-        gene.unique ? 0 : indices.species[Symbol("$(name).inactive")],
+        gene.unique ? 0 : indices.unknowns[Symbol("$(name).inactive")],
         scale, offset, affect,
     )
 end

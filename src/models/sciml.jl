@@ -400,19 +400,19 @@ end
 const ParameterIndex = MTKB.ParameterIndex{MTKB.SciMLStructures.Tunable, Int}
 
 struct Affect{N}
-    species::NTuple{N, Int}
+    unknowns::NTuple{N, Int}
     change::NTuple{N, Int8}
 end
 
 function (a::Affect{N})(integrator) where N
     @inbounds for i in 1:N
-        integrator.u[a.species[i]] += a.change[i]
+        integrator.u[a.unknowns[i]] += a.change[i]
     end
     nothing
 end
 
 struct Indices
-    species::Dict{Symbol, Int}
+    unknowns::Dict{Symbol, Int}
     parameters::Dict{Symbol, ParameterIndex}
 end
 
