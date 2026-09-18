@@ -608,6 +608,7 @@ function render(
         maximum(segment.to for segment in trajectories.records)
 
     for (row, kind) in enumerate(tracks)
+        type = seriestype(kind)
         axis = Axis(
             figure[row, 1];
             ylabel=string(kind),
@@ -619,6 +620,10 @@ function render(
             xpanlock=false,
             ypanlock=true,
             panbutton=Mouse.left,
+            (type === CountSeries ? (ytickformat = values -> [
+                v == round(v) ? string(round(Int, v)) : string(v)
+                for v in values
+            ],) : NamedTuple())...
         )
         push!(axes, axis)
         constrain_x!(axis, from, to)
@@ -628,7 +633,6 @@ function render(
             kind,
             Dict{Int, Catenation}(),
         )
-        type = seriestype(kind)
         window = sampling_window(axis)
         if type === CountSeries
             render!(

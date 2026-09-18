@@ -4,15 +4,17 @@ using HypertextLiteral: @htl
 struct JSONEditor
     contents::String
     height::String
+    on_save::Bool
 end
 
 Base.get(editor::JSONEditor) = editor.contents
 
-JSONEditor(contents; height="400px") = JSONEditor(string(contents), string(height))
+JSONEditor(contents; height="400px", on_save=true) = JSONEditor(string(contents), string(height), on_save)
 
 Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
     show(io, MIME"text/html"(), @htl("""
-<div class="json-editor" style="--editor-height: $(editor.height)">
+<div class="json-editor" style="--editor-height: $(editor.height)"
+    data-on-save="$(editor.on_save)">
     <textarea hidden>$(editor.contents)</textarea>
     <div class="editor"></div>
 
@@ -33,6 +35,39 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
             font-size: 12px;
         }
 
+        .json-editor {
+            position: relative;
+        }
+
+        .json-editor::after {
+            content: "";
+            position: absolute;
+            top: 8px;
+            right: 14px;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            color: #a1a1aa;
+            opacity: 0;
+            transition: opacity 120ms ease;
+            pointer-events: none;
+        }
+
+        .json-editor.dirty::after {
+            opacity: 0.9;
+        }
+
+        .json-editor .color-swatch {
+            display: inline-block;
+            width: 0.75em;
+            height: 0.75em;
+            margin-left: 0.35em;
+            border-radius: 2px;
+            border: 1px solid rgba(128, 128, 128, 0.5);
+            vertical-align: -0.05em;
+        }
+
         .json-editor .cm-scroller {
             overflow: auto;
         }
@@ -49,6 +84,10 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
         @media (prefers-color-scheme: dark) {
             .json-editor .cm-editor {
                 border-color: #6b7280;
+            }
+
+            .json-editor::after {
+                color: #71717a;
             }
 
             .json-editor .cm-gutters {
@@ -76,6 +115,7 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
     <script>
         const root = currentScript.parentElement
         const parent = root.querySelector(".editor")
+        const COMMIT_ON_SAVE = root.dataset.onSave === "true"
         parent.addEventListener("input", event => event.stopPropagation())
         const initialValue = root.querySelector("textarea").value
         root.value = initialValue
@@ -84,7 +124,7 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
             await import("https://esm.sh/codemirror@6.0.2")
         const { indentWithTab } =
             await import("https://esm.sh/@codemirror/commands@^6.0.0?target=es2022")
-        const { keymap } =
+        const { keymap, Decoration, ViewPlugin, WidgetType } =
             await import("https://esm.sh/@codemirror/view@^6.0.0?target=es2022")
         const { json } =
             await import("https://esm.sh/@codemirror/lang-json@6.0.2")
@@ -107,13 +147,81 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
         let lastChange = 0
         let pending = 0
 
-        const createEditor = contents => new EditorView({
-            doc: contents,
+        let contents = initialValue
+        let dirty = false
+
+        const setDirty = value => {
+            dirty = value
+            root.classList.toggle("dirty", value)
+        }
+
+        const commit = () => {
+            pending = 0
+            burst = 0
+            setDirty(false)
+            root.value = contents
+            root.dispatchEvent(new CustomEvent("input"))
+        }
+
+        class ColorSwatch extends WidgetType {
+            constructor(color) { super(); this.color = color }
+            eq(other) { return other.color === this.color }
+            toDOM() {
+                const box = document.createElement("span")
+                box.className = "color-swatch"
+                box.style.backgroundColor = this.color
+                return box
+            }
+        }
+
+        const SWATCH_PATTERN =
+            /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})/g
+
+        const buildSwatches = view => {
+            const widgets = []
+            for (const { from, to } of view.visibleRanges) {
+                const text = view.state.doc.sliceString(from, to)
+                SWATCH_PATTERN.lastIndex = 0
+                let match
+                while ((match = SWATCH_PATTERN.exec(text)) !== null) {
+                    widgets.push(
+                        Decoration.widget({
+                            widget: new ColorSwatch(match[0]),
+                            side: 1,
+                        }).range(from + match.index + match[0].length),
+                    )
+                }
+            }
+            return Decoration.set(widgets, true)
+        }
+
+        const colorSwatches = ViewPlugin.fromClass(
+            class {
+                constructor(view) {
+                    this.decorations = buildSwatches(view)
+                }
+                update(update) {
+                    if (update.docChanged || update.viewportChanged) {
+                        this.decorations = buildSwatches(update.view)
+                    }
+                }
+            },
+            { decorations: plugin => plugin.decorations },
+        )
+
+        const createEditor = doc => new EditorView({
+            doc,
             parent,
             extensions: [
+                keymap.of([{
+                    key: "Mod-s",
+                    preventDefault: true,
+                    run: () => { dirty && commit(); return true },
+                }]),
                 basicSetup,
                 keymap.of([indentWithTab]),
                 json(),
+                colorSwatches,
                 colorScheme.matches ? oneDark : [],
                 EditorView.updateListener.of(update => {
                     if (!update.docChanged) return
@@ -123,7 +231,7 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
                     lastChange = now
                     pending || (pending = now)
 
-                    const contents = update.state.doc.toString()
+                    contents = update.state.doc.toString()
                     let valid = true
                     try {
                         JSON.parse(contents)
@@ -131,11 +239,9 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
                         valid = false
                     }
 
-                    const commit = () => {
-                        pending = 0
-                        burst = 0
-                        root.value = contents
-                        root.dispatchEvent(new CustomEvent("input"))
+                    if (COMMIT_ON_SAVE) {
+                        setDirty(true)
+                        return
                     }
 
                     clearTimeout(timeout)
@@ -159,9 +265,9 @@ Base.show(io::IO, ::MIME"text/html", editor::JSONEditor) =
         })
 
         const updateTheme = () => {
-            const contents = view.state.doc.toString()
+            const current = view.state.doc.toString()
             view.destroy()
-            view = createEditor(contents)
+            view = createEditor(current)
         }
 
         view = createEditor(initialValue)

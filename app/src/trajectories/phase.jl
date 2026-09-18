@@ -108,7 +108,10 @@ palette(::Val{:genes}, snapshot, group_colors, temperature) =
     blend(snapshot.X, snapshot.dimensions, group_colors; temperature)
 
 function palette(::Val{:time}, snapshot, _group_colors, _temperature)
-    scheme = to_colormap(:viridis)
+    scheme = [
+        RGBf(convert(Colors.RGB, Colors.HSL(h, 0.65, 0.58)))
+        for h in range(140, 300; length=256)
+    ]
     ts = [state.t for state in snapshot.states]
     low, high = extrema(ts)
     span = high > low ? high - low : 1.0

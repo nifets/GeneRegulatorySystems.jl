@@ -36,12 +36,14 @@ end
 
 Catenation(; segments, trajectories=Dict{Dimension, Series}()) = Catenation(segments, trajectories)
 
+pathdepth(path) = length(ancestors(path))
+
 paths(index) = sort!(unique(
         prefix
         for segment in index
         for prefix in [ancestors(segment.path); string(segment.path)]
         if !isempty(prefix)
-    ); by=pathorder)
+    ); by=path -> (pathdepth(path), pathorder(path)))
 
 describe(path, label) = isempty(label) ? String(path) : "$path ($label)"
 

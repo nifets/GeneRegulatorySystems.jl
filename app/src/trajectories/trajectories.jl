@@ -11,7 +11,7 @@ using GeneRegulatorySystems.Visualisation:
     branch, by_kind, cut, place!, seriestype
 import GeneRegulatorySystems.Visualisation: describe
 import Colors
-using Statistics: mean, std
+using Statistics: mean, std, var
 using MultivariateStats: PCA, fit, predict
 import UMAP
 
@@ -19,5 +19,6 @@ include("sink.jl")
 include("lod.jl")
 include("render.jl")
 include("phase.jl")
+include("distributions.jl")
 
 end

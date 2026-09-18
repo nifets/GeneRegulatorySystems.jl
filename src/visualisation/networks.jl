@@ -67,7 +67,10 @@ function Network(network::Models.RegulatoryNetwork)
         [Node(name=g, kind=:gene) for g in network.species_groups],
         [Node(name=species,kind=:species, properties=Dict{Symbol,Any}(:shared=>true)) for species in network.shared_species]
     )
-    gene_links = [Link(kind=link.kind, from=link.from, to=link.to, scope=:gene, properties=link.properties) for link in network.links]
+    gene_links = [Link(
+        kind=link.kind, from=link.from, to=link.to, scope=:gene,
+        properties=merge(link.properties, Dict{Symbol, Any}(:species => link.from))
+        ) for link in network.links]
     modulation_links = [Link(
         kind=link.modulation.kind,
         from=link.modulation.from,
@@ -502,12 +505,11 @@ link_tooltip(::Val{:substrate}, link, network) = nothing
 link_tooltip(::Val{:product}, link, network) = nothing
 
 function link_tooltip(::Val, link, network)
-    species_level = link.kind in (:promotes, :inhibits)
-    from = species_level ? link.from : something(gene_of(link.from, network.genes), link.from)
-    to = species_level ? link.to : something(gene_of(link.to, network.genes), link.to)
-    heading = "$(link.kind): $from → $to"
+    heading = "$(link.kind): $(link.from) → $(link.to)"
+    species = get(link.properties, :species, nothing)
+    via = isnothing(species) || species == link.from ? () : (" via $species",)
     parameters = ("  $line" for line in parameter_lines(link, network))
-    join((heading, parameters...), "\n")
+    join((heading, via..., parameters...), "\n")
 end
 
 path_views(network::Network) =

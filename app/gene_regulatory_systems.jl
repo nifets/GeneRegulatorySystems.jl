@@ -874,6 +874,12 @@ path_options = let
     ]
 end
 
+# ╔═╡ 1f6b30ca-8d47-4e52-9a03-6c8e1d47b259
+distribution_path_control = @bind secondary_path PlutoUI.Select(
+    [nothing => "none"; path_options];
+    default=nothing,
+);
+
 # ╔═╡ 1a7f39c4-5d82-4e60-b3a1-8c46f207de92
 trajectory_path_control = @bind selected_path PlutoUI.Select(path_options);
 
@@ -924,7 +930,10 @@ trajectory_view = if run_simulation && !ismissing(dark_mode)
 end;
 
 # ╔═╡ 2f83b1d6-9c07-4e58-a3f1-64d0b8ea7c19
-phase_toggle_control = @bind show_phase PlutoUI.Switch(default=true);
+analysis_control = @bind analysis PlutoUI.Select(
+    ["none" => "none", "phase" => "phase", "distribution" => "distribution"];
+    default="phase",
+);
 
 # ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
 trajectory_header = isnothing(trajectory_view) ? nothing : @htl("""
@@ -941,8 +950,8 @@ trajectory_header = isnothing(trajectory_view) ? nothing : @htl("""
         </label>
 
         <label class="dashboard-option">
-            <span>projection:</span>
-            $(phase_toggle_control)
+            <span>analysis:</span>
+            $(analysis_control)
         </label>
     </div>
     <label class="dashboard-option stacked">
@@ -964,10 +973,68 @@ dashboard_area(
 )
 
 # ╔═╡ 4a1c8e77-2d95-4f3a-b0e6-1c7d9f2a4b58
-phase_track_control = @bind phase_track PlutoUI.Select(
+analysis_track_control = @bind analysis_track PlutoUI.Select(
     string.(track_options);
     default=in("proteins", string.(track_options)) ? "proteins" : first(string.(track_options)),
 );
+
+# ╔═╡ 5a2d84f7-1c39-4b68-8e70-9f3a52c1d704
+distribution_samples = if run_simulation && analysis == "distribution"
+    Trajectories.counts(
+        Trajectories.select(trace, selected_path),
+        visible_genes,
+        analysis_track,
+    )
+end
+
+# ╔═╡ 8c40e91b-6f25-4d3a-97b1-4e08d5a2f637
+distribution_reference =
+    if !isnothing(distribution_samples) && !isnothing(secondary_path)
+        Trajectories.counts(
+            Trajectories.select(trace, secondary_path),
+            visible_genes,
+            analysis_track,
+        )
+    end
+
+# ╔═╡ 9b1c47e3-5a82-4f07-b3e6-08d27f4a5169
+distribution_view =
+    if !isnothing(distribution_samples) && !ismissing(dark_mode)
+        Bonito.App() do
+            with_theme(dark_mode ? theme_dark() : Theme()) do
+                figure = isnothing(distribution_reference) ?
+                    Trajectories.render(distribution_samples; group_colors) :
+                    Trajectories.render(
+                        distribution_samples,
+                        distribution_reference;
+                        group_colors,
+                    )
+                DOM.div(
+                    WGLMakie.WithConfig(figure; resize_to = (:parent, nothing));
+                    style = "width: 100%; height: 100%;",
+                )
+            end
+        end
+    end
+
+# ╔═╡ 2e79f5a8-b013-4c96-85d2-7a1fc6039e48
+distribution_header = isnothing(distribution_samples) ? nothing : @htl("""
+<div class="dashboard-header">
+    <label class="dashboard-option">
+        <span>track:</span>
+        $(analysis_track_control)
+    </label>
+
+    <label class="dashboard-option">
+        <span>compare:</span>
+        $(distribution_path_control)
+    </label>
+
+    <span style="opacity: 0.5; font-size: 0.75rem;">
+        $(size(distribution_samples.X, 2)) samples
+    </span>
+</div>
+""");
 
 # ╔═╡ be5ca395-d977-4082-a700-60730ba278df
 phase_components_control = @bind phase_components PlutoUI.Select(
@@ -982,11 +1049,11 @@ phase_coloring_control = @bind phase_coloring PlutoUI.Select(
 );
 
 # ╔═╡ 9e8abb2f-4531-4c57-a15f-547938cbd6e4
-phase_snapshot = if run_simulation && show_phase
+phase_snapshot = if run_simulation && analysis == "phase"
     Trajectories.snapshots(
         Trajectories.select(trace, selected_path),
         visible_genes,
-        phase_track,
+        analysis_track,
     )
 end
 
@@ -1001,11 +1068,11 @@ phase_projection = if !isnothing(phase_snapshot)
 end
 
 # ╔═╡ 7f2b6c14-8a03-4d51-9e27-3b5c0a8f61d9
-phase_header = !(run_simulation && show_phase) ? nothing : @htl("""
+phase_header = !(run_simulation && analysis == "phase") ? nothing : @htl("""
 <div class="dashboard-header">
     <label class="dashboard-option">
         <span>track:</span>
-        $(phase_track_control)
+        $(analysis_track_control)
     </label>
 
     <label class="dashboard-option">
@@ -1046,6 +1113,8 @@ dashboard_area(
     schedule_panel,
     phase_header,
     dashboard_panel(phase_view; height=450),
+    distribution_header,
+    dashboard_panel(distribution_view; height=450),
 )
 
 # ╔═╡ a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
@@ -1054,8 +1123,11 @@ begin
     app_header = @htl("""
 <header class="grs-header">
     <div class="logo-wrapper">
-        $(PlutoUI.LocalResource(joinpath(@__DIR__, "assets", "logo.png")))
+        <a href="/" title="Pluto home">
+            $(PlutoUI.LocalResource(joinpath(@__DIR__, "assets", "logo.png")))
+        </a>
     </div>
+
     <div>
         <div class="grs-title">Gene Regulatory Systems</div>
     </div>
@@ -1091,6 +1163,10 @@ begin
     }
     .logo-wrapper {
         filter: drop-shadow(-1.4px 2px 2px rgba(150, 150, 150, 0.3));
+    }
+    .logo-wrapper a {
+        display: block;
+        line-height: 0;
     }
     .logo-wrapper img {
         width: 40px;
@@ -1150,6 +1226,11 @@ dashboard_area("header", app_header)
 # ╠═032084a8-991a-4eeb-a5e9-78110b2b7cbe
 # ╠═116c3c09-d5b1-4c86-8c08-c470df26099b
 # ╠═2b6e0f41-8d59-4033-a4e7-19f5b308620d
+# ╠═1f6b30ca-8d47-4e52-9a03-6c8e1d47b259
+# ╠═5a2d84f7-1c39-4b68-8e70-9f3a52c1d704
+# ╠═8c40e91b-6f25-4d3a-97b1-4e08d5a2f637
+# ╠═2e79f5a8-b013-4c96-85d2-7a1fc6039e48
+# ╠═9b1c47e3-5a82-4f07-b3e6-08d27f4a5169
 # ╠═3c7f1052-9e6a-4144-b5f8-2a06c419731e
 # ╠═b7e4c1a0-5d92-4f3e-8a61-2c9f0d7b4e83
 # ╠═c8f5d2b1-6ea3-4045-9b72-3da10e8c5f94
