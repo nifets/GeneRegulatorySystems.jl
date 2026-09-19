@@ -63,12 +63,15 @@ function Network(provenance::Models.Provenance)
 end
 
 function Network(network::Models.RegulatoryNetwork)
+    groups = Set(network.species_groups)
     nodes = vcat(
         [Node(name=g, kind=:gene) for g in network.species_groups],
         [Node(name=species,kind=:species, properties=Dict{Symbol,Any}(:shared=>true)) for species in network.shared_species]
     )
     gene_links = [Link(
-        kind=link.kind, from=link.from, to=link.to, scope=:gene,
+        kind=link.kind,
+        from=something(gene_of(link.from, groups), link.from),
+        to=link.to, scope=:gene,
         properties=merge(link.properties, Dict{Symbol, Any}(:species => link.from))
         ) for link in network.links]
     modulation_links = [Link(
