@@ -1140,7 +1140,6 @@ function regulation(
         # their rate is nonzero.
         [
             annotate(Reaction(
-                # need to use :k⁺ instead of :k⁺ because ₊ is used as a scope separator in MTK
                 make_parameter(Symbol("reaction.$(name).k⁺"), k⁺),
                 regulator_of.(keys(from.counts)),
                 regulator_of.(keys(to.counts)),
@@ -1216,10 +1215,19 @@ function promoter_bracket_data(system)
     )
 end
 
-hybrid(definition::Definition; exact = RSSACR(), dt = Inf, nc = nothing, kwargs...) =
+hybrid(definition::Definition; exact = RSSACR(), dt = Inf, nc = nothing,
+        policy = nothing, kwargs...) =
     JumpProcesses.HybridTau(exact,
-        nc === nothing ? blending_policy(definition) : JumpProcesses.CriticalBlend(nc),
+        blending_policy(policy === nothing ? definition : Val(Symbol(policy)), nc),
         dt; kwargs...)
+
+blending_policy(definition::Definition, nc) =
+    nc === nothing ? blending_policy(definition) : JumpProcesses.CriticalBlend(nc)
+
+blending_policy(::Val{:AlwaysLeap}, _) = JumpProcesses.AlwaysLeap()
+blending_policy(::Val{:LinearBlend}, _) = JumpProcesses.LinearBlend()
+blending_policy(::Val{:CriticalBlend}, nc) =
+    JumpProcesses.CriticalBlend(something(nc, 10))
 
 blending_policy(definition::Definition) =
     any(switching, definition.genes) ?
@@ -1342,11 +1350,15 @@ systems (having less than 100 species and less than 1000 reactions), and
 policy chosen from whether any gene keeps `active`. It may instead be given as a
 JSON object
 ```
-{"name": "HybridTau", "exact": <exact>, "epsilon": <epsilon>, "dt": <dt>}
+{"name": "HybridTau", "exact": <exact>, "epsilon": <epsilon>, "dt": <dt>,
+ "policy": <policy>, "nc": <nc>}
 ```
 where `<exact>` names the inner exact aggregator (`"RSSACR"` by default),
 `<epsilon>` is the tau-selection tolerance, and `<dt>` an upper bound on the
-leap window.
+leap window. Setting `<epsilon>` to `null` selects fixed steps of `<dt>` instead
+of adaptive tau selection. `<policy>` overrides the blending policy with one of
+`"AlwaysLeap"`, `"CriticalBlend"` or `"LinearBlend"`, and `<nc>` sets the
+critical threshold.
 
 # Specification
 
