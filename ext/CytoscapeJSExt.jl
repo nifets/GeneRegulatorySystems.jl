@@ -524,7 +524,7 @@ cy => {
     });
 
     function updateToggle() {
-        const available = speciesElements.length > 0;
+        const available = speciesElements().length > 0;
         toggle.disabled = !available;
         toggle.style.opacity = available ? "1" : "0.4";
         toggle.style.cursor = available ? "pointer" : "default";
