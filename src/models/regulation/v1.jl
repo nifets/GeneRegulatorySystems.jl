@@ -454,7 +454,10 @@ function cast(::Type{HillRegulator}, x::AbstractDict{Symbol}; _...)
     @invoke cast(HillRegulator::Type, x::AbstractDict{Symbol})
 end
 
+function thermodynamic end
+
 aggregation(::Val{:neutral}, _) = one ∘ typeof ∘ first
+aggregation(::Val{:thermodynamic}, _) = thermodynamic
 aggregation(::Val{:minimum}, _) = minimum
 aggregation(::Val{:maximum}, _) = maximum
 aggregation(::Val{:mean}, _) = mean
@@ -471,6 +474,7 @@ aggregation(::Val{:generalized_mean}, p::Float64) =
     Base.Fix2(genmean, p)
 
 aggregation_name(::typeof(one ∘ typeof ∘ first)) = "neutral"
+aggregation_name(::typeof(thermodynamic)) = "thermodynamic"
 aggregation_name(::typeof(geomean)) = "geometric_mean"
 aggregation_name(::typeof(harmmean)) = "harmonic_mean"
 aggregation_name(f::Function) = nameof(f)
@@ -766,6 +770,8 @@ hill(r::Regulators, j, u, p) =
     @inbounds hill2(u[r.source[j]], 1.0, p[r.at[j]], p[r.k[j]])
 
 aggregate(::typeof(one ∘ typeof ∘ first), r::Regulators, u, p) = 1.0
+aggregate(::typeof(thermodynamic), r::Regulators, u, p) =
+    error("thermodynamic promoters have no per-class aggregate")
 aggregate(::typeof(minimum), r::Regulators, u, p) =
     minimum(j -> hill(r, j, u, p), eachindex(r.source))
 aggregate(::typeof(maximum), r::Regulators, u, p) =
@@ -853,6 +859,43 @@ SciML.lrate(f::EquilibriumRate, ulow, uhigh, p) =
 SciML.urate(f::EquilibriumRate, ulow, uhigh, p) =
     @inbounds p[f.k] * active_fraction(f, ulow, uhigh, p) * uhigh[f.polymerases]
 
+struct ThermodynamicRate{N}
+    name::Symbol
+    k::SciML.ParameterIndex
+    kon::SciML.ParameterIndex
+    koff::SciML.ParameterIndex
+    repression::Regulators
+    activation::Regulators
+    polymerases::Int
+    affect::SciML.Affect{N}
+end
+
+function logsum(r::Regulators, u, p)
+    total = 0.0
+    @inbounds for j in eachindex(r.source)
+        total += log1p((u[r.source[j]] / p[r.at[j]]) ^ abs(p[r.k[j]]))
+    end
+    total
+end
+
+function active_fraction(f::ThermodynamicRate, urepression, uactivation, p)
+    @inbounds kon, koff = p[f.kon], p[f.koff]
+    la = logsum(f.activation, uactivation, p)
+    lr = logsum(f.repression, urepression, p)
+    (expm1(la) + kon / (kon + koff)) * exp(-(la + lr))
+end
+
+SciML.observed_activity(f::ThermodynamicRate, u, p) =
+    f.name => active_fraction(f, u, u, p)
+
+(f::ThermodynamicRate)(u, p, _) =
+    @inbounds p[f.k] * active_fraction(f, u, u, p) * u[f.polymerases]
+
+SciML.lrate(f::ThermodynamicRate, ulow, uhigh, p) =
+    @inbounds p[f.k] * active_fraction(f, uhigh, ulow, p) * ulow[f.polymerases]
+SciML.urate(f::ThermodynamicRate, ulow, uhigh, p) =
+    @inbounds p[f.k] * active_fraction(f, ulow, uhigh, p) * uhigh[f.polymerases]
+
 function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slots, aggregate)
     aggregate isa typeof(one ∘ typeof ∘ first) && return Regulators(
         Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], Float64[])
@@ -878,6 +921,7 @@ function promoter_rate(jump, genes, definition::Definition, indices::SciML.Indic
 
     @something(
         promoter_rate(Val(:switching), net_stoich, affect, genes, definition, indices),
+        promoter_rate(Val(:thermodynamic), net_stoich, affect, genes, definition, indices),
         promoter_rate(Val(:equilibrium), net_stoich, affect, genes, definition, indices),
         Some(nothing),
     )
@@ -915,6 +959,29 @@ function promoter_rate(
             gene.activation.aggregate),
         gene.repression.aggregate,
         gene.activation.aggregate,
+        indices.unknowns[definition.polymerases],
+        affect,
+    )
+end
+
+function promoter_rate(
+    ::Val{:thermodynamic}, net_stoich, affect, genes, definition, indices,
+)
+    name = gene_of(net_stoich, genes) do gene, kind, change
+        change > 0 && !switching(gene) && kind === first_transcript(gene)
+    end
+    name === nothing && return nothing
+    gene = genes[name]
+    gene.activation.aggregate === thermodynamic || return nothing
+    ThermodynamicRate(
+        Symbol("$(name).activity"),
+        indices.parameters[Symbol("$(name).trigger")],
+        indices.parameters[Symbol("$(name).activation")],
+        indices.parameters[Symbol("$(name).deactivation")],
+        regulators(indices, genes, gene, "repression", gene.repression.slots,
+            gene.repression.aggregate),
+        regulators(indices, genes, gene, "activation", gene.activation.slots,
+            gene.activation.aggregate),
         indices.unknowns[definition.polymerases],
         affect,
     )
@@ -1028,9 +1095,32 @@ function regulation(
         kon / (kon + koff)
     end
 
+    partition(target::Gene, kind::String, slots) = prod(
+        (
+            1 + (regulator_of(from) /
+                make_parameter(Symbol("$(target.name).$(kind).$(from).at"), at)) ^
+                abs(make_parameter(Symbol("$(target.name).$(kind).$(from).k"), k))
+            for (; from, k, at) in slots
+        );
+        init = one(Num),
+    )
+
+    function p_thermodynamic(target::Gene)
+        kon = make_parameter(Symbol("$(target.name).activation"),
+            target.base_rates.activation)
+        koff = make_parameter(Symbol("$(target.name).deactivation"),
+            target.base_rates.deactivation)
+        P = partition(target, "activation", target.activation.slots)
+        Q = partition(target, "repression", target.repression.slots)
+        (P - koff / (kon + koff)) / (P * Q)
+    end
+
+    p_promoter(target::Gene) = target.activation.aggregate === thermodynamic ?
+        p_thermodynamic(target) : p_active(target)
+
     function promoter_activity(target)
         if !switching(target)
-            p_active(target)
+            p_promoter(target)
         elseif target.unique
             genes[target.name].active
         else
@@ -1103,7 +1193,7 @@ function regulation(
                         (regulator_of(slot.from) => Int8(-1) for slot in target.repression.slots)...
                     ]
                     annotate(Reaction(
-                        trigger_rate(target) * p_active(target),
+                        trigger_rate(target) * p_promoter(target),
                         [polymerases, catalysts...],
                         [getproperty(genes[target.name], transcript), catalysts...,
                             (held ? () : (polymerases,))...];
