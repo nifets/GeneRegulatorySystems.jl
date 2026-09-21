@@ -6,6 +6,7 @@ using Colors
 
 const Vis = GeneRegulatorySystems.Visualisation
 const JS = CytoscapeJS.Bonito
+const Observable = CytoscapeJS.Observable
 
 const GENE_WIDTH = 144
 const GENE_HEIGHT = 80
@@ -76,11 +77,14 @@ end
 
 const DEFAULT_ATTRIBUTES = graph_attributes()
 
+CytoscapeJS.Cytoscape(network::Vis.Network; kwargs...) =
+    CytoscapeJS.Cytoscape(Observable(network); kwargs...)
+
 function CytoscapeJS.Cytoscape(
-    network::Vis.Network;
+    network::Observable{<:Vis.Network};
     layout=DEFAULT_LAYOUT,
-    group_colors=Vis.group_colors(network.groups),
-    stylesheet=stylesheet(network, group_colors),
+    group_colors=Vis.group_colors(network[].groups),
+    stylesheet=stylesheet(network[], group_colors),
     tooltip_attributes = DEFAULT_TOOLTIP_ATTRIBUTES,
     height="100vh",
     min_height="0",
@@ -93,22 +97,24 @@ function CytoscapeJS.Cytoscape(
     simplify_above=127,
     kwargs...
 )
-    simplified = length(network.groups) > simplify_above
+    simplified = length(network[].groups) > simplify_above
     simplified &&
         (layout = (; layout..., quality="draft", nodeSeparation=1000, spacingFactor=4))
-    strength_reference = get_strength_reference(network)
-    views = Vis.path_views(network)
-    gene_elements = elements(
-        Vis.gene_view(network; include_shared),
-        network, Val(:gene), group_colors, strength_reference, views,
-    )
-    species_elements = simplified ? empty(gene_elements) : elements(
-        Vis.species_view(network; include_shared),
-        network, Val(:species), group_colors, strength_reference, views,
+
+    build(net, mode) = elements(
+        mode === Val(:gene) ?
+            Vis.gene_view(net; include_shared) :
+            Vis.species_view(net; include_shared),
+        net, mode, group_colors, get_strength_reference(net), Vis.path_views(net),
     )
 
+    gene_elements = map(net -> build(net, Val(:gene)), network)
+    species_elements = map(network) do net
+        simplified ? empty(gene_elements[]) : build(net, Val(:species))
+    end
+
     CytoscapeJS.Cytoscape(
-        gene_elements;
+        gene_elements[];
         layout=(; layout..., name="preset"),
         stylesheet,
         setup=network_setup(
@@ -480,9 +486,11 @@ cy => {
         viewport: null,
         preference: null,
     };
-    const geneElements = $(gene_elements);
-    const speciesElements = $(species_elements);
-    const geneEdges = geneElements.filter(
+    const geneElementsObs = $(gene_elements);
+    const speciesElementsObs = $(species_elements);
+    const geneElements = () => geneElementsObs.value;
+    const speciesElements = () => speciesElementsObs.value;
+    const geneEdges = () => geneElements().filter(
         element => element.data.source !== undefined
     );
 
@@ -571,7 +579,7 @@ cy => {
     }
     function detailLegible() {
         const genes = cy.nodes(".gene");
-        return speciesElements.length > 0 && genes.nonempty() &&
+        return speciesElements().length > 0 && genes.nonempty() &&
             genes.first().renderedWidth() >= MIN_GENE_PIXELS;
     }
 
@@ -633,7 +641,7 @@ cy => {
         )
         cy.batch(() => {
             cy.remove(cy.edges());
-            for (const element of speciesElements) {
+            for (const element of speciesElements()) {
                 if (cy.getElementById(element.data.id).empty()) {
                     const added = cy.add(element);
                     const position = positions.get(element.data.id);
@@ -656,7 +664,7 @@ cy => {
         cy.batch(() => {
             cy.remove(cy.nodes(":child"));
             cy.remove(cy.edges());
-            cy.add(geneEdges);
+            cy.add(geneEdges());
             cy.nodes(".gene").removeClass("compound-parent");
         })
     }
@@ -672,7 +680,7 @@ cy => {
 
     toggle.addEventListener("click", event => {
         event.stopPropagation();
-        if (speciesElements.length === 0) return;
+        if (speciesElements().length === 0) return;
         preference = layoutState.preference = !detailVisible;
         update();
     });
@@ -1093,6 +1101,7 @@ function network_setup(
     setup_physics = isnothing(physics) ? nothing :
         continuous_physics(physics, edge_lengths, simplified)
     theme = automatic_theme()
+    live = live_elements(gene_elements, species_elements)
 
     JS.js"""
     async cy => {
@@ -1102,6 +1111,7 @@ function network_setup(
         const setupLayout = $(setup_layout);
         const setupPhysics = $(setup_physics);
         const setupTheme = $(theme);
+        const setupLive = $(live);
 
         try { await setupLayout(cy); } catch (error) { console.error(error); }
         setupTheme(cy);
@@ -1109,6 +1119,29 @@ function network_setup(
         setupSelection(cy);
         setupParameters(cy);
         if (setupPhysics) setupPhysics(cy);
+        setupLive(cy);
+    }
+    """
+end
+
+# Merge new element `data` into the elements already on the canvas whenever the
+# source network changes. Data only: nodes and edges are never added or removed,
+# so the layout, the zoom and the gene/species toggle all survive an update. A
+# network whose node or link set differs from the one the graph was built with
+# needs a new graph, not an update.
+function live_elements(gene_elements, species_elements)
+    JS.js"""
+    cy => {
+        const merge = elements => {
+            cy.batch(() => {
+                for (const element of elements) {
+                    const existing = cy.getElementById(element.data.id);
+                    if (existing.nonempty()) existing.data(element.data);
+                }
+            });
+        };
+        $(gene_elements).on(merge);
+        $(species_elements).on(merge);
     }
     """
 end
