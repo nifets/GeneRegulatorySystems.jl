@@ -677,10 +677,12 @@ function each_parameter(callback::Function, definition::Definition)
         for slot in g.activation.slots
             callback(Symbol("$(g.name).activation.$(slot.from).at"), slot.at)
             callback(Symbol("$(g.name).activation.$(slot.from).k"),  slot.k)
+            callback(Symbol("$(g.name).activation.$(slot.from).w"),  slot.w)
         end
         for slot in g.repression.slots
             callback(Symbol("$(g.name).repression.$(slot.from).at"), slot.at)
             callback(Symbol("$(g.name).repression.$(slot.from).k"),  slot.k)
+            callback(Symbol("$(g.name).repression.$(slot.from).w"),  slot.w)
         end
         for slot in g.proteolysis.slots
             callback(Symbol("$(g.name).proteolysis.$(slot.from).k"), slot.k)
@@ -733,7 +735,8 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
             slots = [
                 HillRegulator(; slot.from,
                     at = get(parameters, Symbol("$(gene.name).activation.$(slot.from).at"), slot.at),
-                    k = get(parameters, Symbol("$(gene.name).activation.$(slot.from).k"), slot.k)
+                    k = get(parameters, Symbol("$(gene.name).activation.$(slot.from).k"), slot.k),
+                    w = get(parameters, Symbol("$(gene.name).activation.$(slot.from).w"), slot.w)
                 )
                 for slot in gene.activation.slots
             ]
@@ -743,7 +746,8 @@ function Models.remake(gene::Gene, parameters::AbstractDict{Symbol, <:Real})
             slots = [
                 HillRegulator(; slot.from,
                     at = get(parameters, Symbol("$(gene.name).repression.$(slot.from).at"), slot.at),
-                    k = get(parameters, Symbol("$(gene.name).repression.$(slot.from).k"), slot.k)
+                    k = get(parameters, Symbol("$(gene.name).repression.$(slot.from).k"), slot.k),
+                    w = get(parameters, Symbol("$(gene.name).repression.$(slot.from).w"), slot.w)
                 )
                 for slot in gene.repression.slots
             ]
@@ -763,8 +767,11 @@ struct Regulators
     source::Vector{Int}
     at::Vector{SciML.ParameterIndex}
     k::Vector{SciML.ParameterIndex}
-    w::Vector{Float64}
+    w::Vector{SciML.ParameterIndex}
 end
+
+weight(r::Regulators, j, p) = @inbounds p[r.w[j]]
+weights(r::Regulators, p) = sum(j -> weight(r, j, p), eachindex(r.w); init = 0.0)
 
 hill(r::Regulators, j, u, p) =
     @inbounds hill2(u[r.source[j]], 1.0, p[r.at[j]], p[r.k[j]])
@@ -772,30 +779,46 @@ hill(r::Regulators, j, u, p) =
 aggregate(::typeof(one ∘ typeof ∘ first), r::Regulators, u, p) = 1.0
 aggregate(::typeof(thermodynamic), r::Regulators, u, p) =
     error("thermodynamic promoters have no per-class aggregate")
+included(r::Regulators, j, p) = weight(r, j, p) > 0.5
+
 aggregate(::typeof(minimum), r::Regulators, u, p) =
-    minimum(j -> hill(r, j, u, p), eachindex(r.source))
-aggregate(::typeof(maximum), r::Regulators, u, p) =
-    maximum(j -> hill(r, j, u, p), eachindex(r.source))
-aggregate(::typeof(mean), r::Regulators, u, p) =
-    sum(j -> hill(r, j, u, p), eachindex(r.source)) / length(r.source)
-aggregate(::typeof(geomean), r::Regulators, u, p) =
-    exp(sum(j -> log(hill(r, j, u, p)), eachindex(r.source)) / length(r.source))
-aggregate(::typeof(harmmean), r::Regulators, u, p) =
-    length(r.source) / sum(j -> inv(hill(r, j, u, p)), eachindex(r.source))
+    minimum(j -> included(r, j, p) ? hill(r, j, u, p) : 1.0, eachindex(r.source))
+function aggregate(::typeof(maximum), r::Regulators, u, p)
+    weights(r, p) > 0.5 || return 1.0
+    maximum(j -> included(r, j, p) ? hill(r, j, u, p) : 0.0, eachindex(r.source))
+end
+
+function aggregate(::typeof(mean), r::Regulators, u, p)
+    total = weights(r, p)
+    total > 0.5 || return 1.0
+    sum(j -> weight(r, j, p) * hill(r, j, u, p), eachindex(r.w)) / total
+end
+
+function aggregate(::typeof(geomean), r::Regulators, u, p)
+    total = weights(r, p)
+    total > 0.5 || return 1.0
+    exp(sum(j -> weight(r, j, p) * log(hill(r, j, u, p)), eachindex(r.w)) / total)
+end
+
+function aggregate(::typeof(harmmean), r::Regulators, u, p)
+    total = weights(r, p)
+    total > 0.5 || return 1.0
+    total / sum(j -> weight(r, j, p) / hill(r, j, u, p), eachindex(r.w))
+end
 
 function aggregate(f::Base.Fix2{typeof(genmean)}, r::Regulators, u, p)
     q = f.x
-    total = sum(r.w)
+    total = weights(r, p)
     total > 0.5 || return 1.0
     abs(q) < 1e-6 &&
-        return exp(sum(j -> r.w[j] * log(hill(r, j, u, p)), eachindex(r.w)) / total)
-    (sum(j -> r.w[j] * hill(r, j, u, p) ^ q, eachindex(r.w)) / total) ^ inv(q)
+        return exp(sum(j -> weight(r, j, p) * log(hill(r, j, u, p)), eachindex(r.w)) / total)
+    (sum(j -> weight(r, j, p) * hill(r, j, u, p) ^ q, eachindex(r.w)) / total) ^ inv(q)
 end
 
 function apply(a, r::Regulators, u, p)
     n = length(r.source)
     n == 0 && return 1.0
-    n == 1 && return hill(r, 1, u, p)
+    n == 1 && return included(r, 1, p) ? hill(r, 1, u, p) : 1.0
     aggregate(a, r, u, p)
 end
 struct SwitchingRate{A, N}
@@ -896,15 +919,49 @@ SciML.lrate(f::ThermodynamicRate, ulow, uhigh, p) =
 SciML.urate(f::ThermodynamicRate, ulow, uhigh, p) =
     @inbounds p[f.k] * active_fraction(f, ulow, uhigh, p) * uhigh[f.polymerases]
 
+weighted(f, hs, ws, name, kind) = f(hs)
+
+weighted(::typeof(minimum), hs, ws, name, kind) =
+    reduce(min, (ifelse(ws[i] > 0.5, hs[i], one(Num)) for i in eachindex(hs)))
+
+function weighted(::typeof(maximum), hs, ws, name, kind)
+    W = sum(ws)
+    best = reduce(max, (ifelse(ws[i] > 0.5, hs[i], zero(Num)) for i in eachindex(hs)))
+    ifelse(W > 0.5, best, one(Num))
+end
+
+function weighted(::typeof(mean), hs, ws, name, kind)
+    W = sum(ws)
+    ifelse(W > 0.5, sum(i -> ws[i] * hs[i], eachindex(hs)) / W, one(Num))
+end
+
+function weighted(::typeof(geomean), hs, ws, name, kind)
+    W = sum(ws)
+    ifelse(W > 0.5, exp(sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W), one(Num))
+end
+
+function weighted(::typeof(harmmean), hs, ws, name, kind)
+    W = sum(ws)
+    ifelse(W > 0.5, W / sum(i -> ws[i] / hs[i], eachindex(hs)), one(Num))
+end
+
+function weighted(f::Base.Fix2{typeof(genmean)}, hs, ws, name, kind)
+    p = make_parameter(Symbol("$(name).$(kind).p"), f.x)
+    W = sum(ws)
+    num = sum(i -> ws[i] * hs[i]^p, eachindex(hs))
+    logmean = sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W
+    ifelse(W > 0.5, ifelse(abs(p) < 1e-6, exp(logmean), (num / W)^inv(p)), one(Num))
+end
+
 function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slots, aggregate)
     aggregate isa typeof(one ∘ typeof ∘ first) && return Regulators(
-        Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], Float64[])
+        Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], SciML.ParameterIndex[])
     regulator(from) = haskey(genes, from) ? regulator_name(genes[from]) : from
     Regulators(
         [indices.unknowns[regulator(slot.from)] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).at")] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).k")] for slot in slots],
-        [slot.w for slot in slots],
+        [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).w")] for slot in slots],
     )
 end
 
@@ -1052,16 +1109,9 @@ function regulation(
 
     aggregate(reg::Regulation, xs, name::Symbol, kind::String) =
         isempty(reg.slots) ? one(Num) :
-        reg.aggregate isa Base.Fix2{typeof(genmean)} ?
-            let hs = collect(xs),
-                ws = [make_parameter(Symbol("$(name).$(kind).$(s.from).w"), s.w) for s in reg.slots],
-                p = make_parameter(Symbol("$(name).$(kind).p"), reg.aggregate.x),
-                W = sum(ws),
-                num = sum(i -> ws[i] * hs[i]^p, eachindex(hs)),
-                logmean = sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W
-                ifelse(W > 0.5, ifelse(abs(p) < 1e-6, exp(logmean), (num / W)^inv(p)), one(Num))
-            end :
-            reg.aggregate(collect(xs))
+        weighted(reg.aggregate, collect(xs),
+            [make_parameter(Symbol("$(name).$(kind).$(s.from).w"), s.w) for s in reg.slots],
+            name, kind)
 
     k_on(target::Gene) = (
         make_parameter(Symbol("$(target.name).activation"), target.base_rates.activation)

@@ -36,6 +36,9 @@ end
 
 paths(network::Network) = sort!(collect(keys(network.parameters)))
 
+Network(model::Models.Model) =
+    Network("", Models.describe(model); parameters=Models.parameters(model))
+
 Network(::Models.Description) = Network()
 Network(descriptions::Models.Descriptions) =
     merge_networks(Network.(descriptions.descriptions)...)
