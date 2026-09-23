@@ -213,6 +213,10 @@ function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_r
         at = Float64(get(link.properties, :at, 1))
         data = merge(data, (; at, strengthNorm=inv(1 + sqrt(at / strength_reference))))
     end
+    if haskey(link.properties, :w)
+        w = Float64(get(link.properties, :w, 1))
+        data = merge(data, (; w, weightNorm=clamp(w, 0, 1)))
+    end
     (; data, classes="$(link.kind)$loop")
 end
 
@@ -378,6 +382,9 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         )),
         (; selector="edge.dimmed", style=Dict(
             "opacity" => 0.3,
+        )),
+        (; selector="edge[weightNorm]", style=Dict(
+            "opacity" => "mapData(weightNorm, 0, 1, 0, 1)",
         )),
         (; selector="edge.unmatched", style=Dict(
             "opacity" => 0,

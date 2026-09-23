@@ -527,6 +527,7 @@ representation(x::Definition) = Dict{Symbol, Any}(
 function Models.describe(definition::Definition)
     genes = Dict(gene.name => gene for gene in definition.genes)
     regulator(name) = haskey(genes, name) ? regulator_name(genes[name]) : name
+    present(slots) = filter(slot -> !iszero(slot.w), slots)
     function modulation(gene, kind, from)
         if switching(genes[gene])
             edge_kind = :inhibits
@@ -539,16 +540,16 @@ function Models.describe(definition::Definition)
     end
     links = mapreduce(vcat, definition.genes; init=NamedTuple[]) do gene
         vcat(
-            map(gene.activation.slots) do (; from, at, k)
-                properties = Dict(:at => at, :k => k,
+            map(present(gene.activation.slots)) do (; from, at, k, w)
+                properties = Dict(:at => at, :k => k, :w => w,
                     :parameters => Dict(
                         :at => Symbol("$(gene.name).activation.$from.at"),
                         :k => Symbol("$(gene.name).activation.$from.k")
                 ))
                 (; to = gene.name, from, kind = :activation, modulation=modulation(gene.name, :activation, from), properties)
             end,
-            map(gene.repression.slots) do (; from, at, k)
-                properties = Dict(:at => at, :k => k,
+            map(present(gene.repression.slots)) do (; from, at, k, w)
+                properties = Dict(:at => at, :k => k, :w => w,
                     :parameters => Dict(
                         :at => Symbol("$(gene.name).repression.$from.at"),
                         :k => Symbol("$(gene.name).repression.$from.k")
@@ -922,27 +923,27 @@ SciML.urate(f::ThermodynamicRate, ulow, uhigh, p) =
 weighted(f, hs, ws, name, kind) = f(hs)
 
 weighted(::typeof(minimum), hs, ws, name, kind) =
-    reduce(min, (ifelse(ws[i] > 0.5, hs[i], one(Num)) for i in eachindex(hs)))
+    reduce(min, (ifelse(ws[i] > 0, hs[i], one(Num)) for i in eachindex(hs)))
 
 function weighted(::typeof(maximum), hs, ws, name, kind)
     W = sum(ws)
-    best = reduce(max, (ifelse(ws[i] > 0.5, hs[i], zero(Num)) for i in eachindex(hs)))
-    ifelse(W > 0.5, best, one(Num))
+    best = reduce(max, (ifelse(ws[i] > 0, hs[i], zero(Num)) for i in eachindex(hs)))
+    ifelse(W > 0, best, one(Num))
 end
 
 function weighted(::typeof(mean), hs, ws, name, kind)
     W = sum(ws)
-    ifelse(W > 0.5, sum(i -> ws[i] * hs[i], eachindex(hs)) / W, one(Num))
+    ifelse(W > 0, sum(i -> ws[i] * hs[i], eachindex(hs)) / W, one(Num))
 end
 
 function weighted(::typeof(geomean), hs, ws, name, kind)
     W = sum(ws)
-    ifelse(W > 0.5, exp(sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W), one(Num))
+    ifelse(W > 0, exp(sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W), one(Num))
 end
 
 function weighted(::typeof(harmmean), hs, ws, name, kind)
     W = sum(ws)
-    ifelse(W > 0.5, W / sum(i -> ws[i] / hs[i], eachindex(hs)), one(Num))
+    ifelse(W > 0, W / sum(i -> ws[i] / hs[i], eachindex(hs)), one(Num))
 end
 
 function weighted(f::Base.Fix2{typeof(genmean)}, hs, ws, name, kind)
@@ -950,7 +951,7 @@ function weighted(f::Base.Fix2{typeof(genmean)}, hs, ws, name, kind)
     W = sum(ws)
     num = sum(i -> ws[i] * hs[i]^p, eachindex(hs))
     logmean = sum(i -> ws[i] * log(hs[i]), eachindex(hs)) / W
-    ifelse(W > 0.5, ifelse(abs(p) < 1e-6, exp(logmean), (num / W)^inv(p)), one(Num))
+    ifelse(W > 0, ifelse(abs(p) < 1e-6, exp(logmean), (num / W)^inv(p)), one(Num))
 end
 
 function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slots, aggregate)
