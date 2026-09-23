@@ -741,6 +741,29 @@ Specifications.set(f!::Schedule, path::AbstractString, new::Specification) = Sch
 prebuild(f!::Schedule, path::AbstractString) =
     Specifications.set(f!, path, Template(reify(f!, path)))
 
+reseed(f!::Schedule, seed::AbstractString) = Schedule(;
+    f!.specification,
+    bindings = merge(f!.bindings, Dict{Symbol,Any}(:seed => seed, :rootseed => seed)),
+    f!.branch,
+    f!.path,
+)
+
+function Models.remake(f!::Schedule, path::AbstractString, parameters::AbstractDict{Symbol})
+    template = Specifications.locate(f!, path)
+    template.value isa AbstractDict &&
+        error("cannot remake '$path': template is unexpanded; prebuild it first")
+    Specifications.set(f!, path, Template(
+        Models.remake(template.value, parameters),
+        template.constructor,
+        template.free,
+    ))
+end
+
+Models.remake(f!::Schedule, parameters::AbstractDict{<:AbstractString,<:AbstractDict}) =
+    foldl(pairs(parameters); init = f!) do acc, (path, params)
+        Models.remake(acc, path, params)
+    end
+
 """
     Merge <: Instant{Branched}
 

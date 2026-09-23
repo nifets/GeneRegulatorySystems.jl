@@ -73,6 +73,14 @@ function t end
 t(x::FlatState) = x.t
 
 """
+    counts(x)
+
+Access the species counts of state `x` as a `Dict{Symbol}`.
+"""
+function counts end
+counts(x::FlatState) = x.counts
+
+"""
     randomness(x)
 
 Access the random number generator instance of state `x`.

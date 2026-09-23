@@ -197,6 +197,10 @@ case, `JumpState` also contains a reference to the corresponding `f!`.
 end
 
 Models.t(x::JumpState) = x.integrator.t
+Models.counts(x::JumpState) = Dict(zip(
+    normalize_name.(SymbolicIndexingInterface.variable_symbols(x.integrator)),
+    x.integrator.u,
+))
 Models.randomness(x::JumpState) = x.integrator.cb.affect!.rng
 
 function Models.empty_trajectory!(x::JumpState)
@@ -204,12 +208,9 @@ function Models.empty_trajectory!(x::JumpState)
     empty!(x.integrator.sol.t)
 end
 
-FlatState(x::JumpState) = FlatState(
+FlatState(x::JumpState) = FlatState(x::JumpState) = FlatState(
     t = Models.t(x),
-    counts = Dict(
-        normalize_name(s) => x.integrator[s]
-        for s in SymbolicIndexingInterface.variable_symbols(x.integrator)
-    ),
+    counts = Models.counts(x),
     randomness = copy(Models.randomness(x)),
 )
 
