@@ -208,7 +208,7 @@ function Models.empty_trajectory!(x::JumpState)
     empty!(x.integrator.sol.t)
 end
 
-FlatState(x::JumpState) = FlatState(x::JumpState) = FlatState(
+FlatState(x::JumpState) = FlatState(
     t = Models.t(x),
     counts = Models.counts(x),
     randomness = copy(Models.randomness(x)),
