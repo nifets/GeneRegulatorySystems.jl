@@ -1371,8 +1371,7 @@ blending_policy(::Val{:CriticalBlend}, nc) =
     JumpProcesses.CriticalBlend(something(nc, 10))
 
 blending_policy(definition::Definition) =
-    any(switching, definition.genes) ?
-    JumpProcesses.CriticalBlend(all(gene -> gene.unique, definition.genes) ? 2 : 11) :
+    any(switching, definition.genes) ? JumpProcesses.CriticalBlend(2) :
     JumpProcesses.AlwaysLeap()
 
 resolve_method(method::JumpProcesses.AbstractAggregatorAlgorithm, system, definition) =
@@ -1398,9 +1397,12 @@ function aggregator_options(algorithm::JumpProcesses.HybridTau, reaction_system,
     if any(switching, definition.genes) &&
        algorithm.policy isa JumpProcesses.CriticalBlend
         nc = algorithm.policy.nc
-        copies = all(gene -> gene.unique, definition.genes) ? 1 : 10
-        minimum(nc) <= copies &&
-            @warn "HybridTau with `active` genes and CriticalBlend(nc = $nc) leaps transcription with the promoter gate held fixed over the window. Pass CriticalBlend($(copies + 1)) or larger, or use `V1.hybrid(definition)`."
+        if all(gene -> gene.unique, definition.genes)
+            minimum(nc) <= 1 &&
+                @warn "HybridTau with `active` genes and CriticalBlend(nc = $nc) leaps transcription with the promoter gate held fixed over the window. Pass CriticalBlend(2) or larger, or use `V1.hybrid(definition)`."
+        else
+            @warn "HybridTau with `unique = false` genes and CriticalBlend(nc = $nc): the promoter copy number is dynamic, so the gate is only kept exact while it stays below $nc. Raise nc above the largest promoter copy number you seed, or use `V1.hybrid(definition)`."
+        end
     end
     aggregator_options(typeof(algorithm.exact), reaction_system, jump_system, definition;
         bounds)
