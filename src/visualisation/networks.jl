@@ -363,6 +363,7 @@ function gene_view(network::Network; include_shared=false)
         end
         for link in network.links if link.scope !== :species
     ]
+    filter!(link -> !(link.kind in (:substrate, :product) && link.from === link.to), links)
     substrates = Dict{Symbol, Dict{Symbol, Int}}()
     products = Dict{Symbol, Dict{Symbol, Int}}()
     for link in network.links
