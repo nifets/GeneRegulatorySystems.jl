@@ -411,7 +411,7 @@ function properties_label(properties)
     entries = [
         key => value
         for (key, value) in properties
-        if key ∉ (:parameters, :gene_link, :regulation)
+        if key ∉ (:parameters, :gene_link, :regulation, :w)
     ]
 
     isempty(entries) && return ""
