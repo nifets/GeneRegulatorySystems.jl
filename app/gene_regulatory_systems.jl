@@ -673,10 +673,9 @@ begin
             init=Dict{String,String}(),
         )
 
-        v1 = get(node, Symbol("{regulation/v1}"), nothing)
-        v1 isa AbstractDict || return colours
+        genes = get(node, :genes, nothing)
+        genes isa AbstractVector || return colours
 
-        genes = get(v1, :genes, [])
         digits = ndigits(length(genes))
 
         merge!(colours, Dict(
@@ -689,8 +688,11 @@ begin
             if gene isa AbstractDict &&
                get(gene, :color, get(gene, :colour, nothing)) isa AbstractString
         ))
+
+        colours
     end
 end
+
 
 # ╔═╡ ea610eb8-caa3-4639-8d25-58904e600e52
 schedule!, gene_colors, network, schedule_error = try
@@ -1251,7 +1253,7 @@ dashboard_area("header", app_header)
 # ╠═8392f056-369c-45fb-9c00-719172e82616
 # ╠═cdbda6eb-b5b9-4e9e-bac0-f334c19ae28e
 # ╠═50fb4e60-7911-4f68-bd4a-166be8d4d44b
-# ╟─69993fb8-daca-4b61-a711-907009dbee24
+# ╠═69993fb8-daca-4b61-a711-907009dbee24
 # ╠═e2b7f4a3-8c15-4d67-9e02-5fa31c7b8d46
 # ╠═ea610eb8-caa3-4639-8d25-58904e600e52
 # ╟─16d523e4-ebec-4d6e-b5e1-7aaf949ec5fc
