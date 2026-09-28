@@ -18,5 +18,5 @@ PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
 
 [compat]
-JumpProcesses = "9.29.2"
+JumpProcesses = "9.32.5"
 julia = "1.11"
