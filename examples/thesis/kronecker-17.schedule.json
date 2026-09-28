@@ -1,0 +1,17 @@
+{   "do": {"{regulation/kronecker}": {
+        "seed": "${rootseed}-17",
+        "base_rates": {"$": ["defaults", "gene", "base_rates"]},
+        "activation": {"at": ["LogNormal", 2.0, 1.0], "adjacency": {
+            "initiator": [[0.8, 0.3], [0.2, 0.5]], "power": 3,
+            "expected_links_per_gene": 0.8
+        }},
+        "repression": {"at": ["LogNormal", 2.0, 1.0], "adjacency": {
+            "initiator": [[0.3, 0.6], [0.4, 0.1]], "power": 3,
+            "expected_links_per_gene": 1.2
+        }}
+    }},
+    "each": {"length": 20}, "as": "i", "branch": true, "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"]}},
+        {"label": "${i}", "to": 72000.0}
+    ]
+}

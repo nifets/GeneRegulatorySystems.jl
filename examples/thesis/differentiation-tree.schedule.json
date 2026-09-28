@@ -1,0 +1,35 @@
+{   "gene": {"$": ["defaults", "differentiation", "differentiator"]},
+    "extract": {"{extract-transcriptome-amplified}": {
+        "collect": 0.9, "cycles": 5, "efficiency": 0.8, "dropout": 0.05,
+        "target": 100
+    }},
+    "step": {
+        "do": {"{regulation/differentiation}": {"differentiation": {
+            "$": ["defaults", "differentiation"],
+            "differentiator": "trigger", "duration": 18000.0, "ratio": 0.6,
+            "next": {
+                "$": ["defaults", "differentiation"], "duration": 36000.0,
+                "next": {"$": "gene"},
+                "alternative": {
+                    "$": ["defaults", "differentiation"],
+                    "duration": 45000.0, "ratio": 0.8,
+                    "next": {"$": "gene"}, "alternative": {"$": "gene"}
+                }
+            },
+            "alternative": {
+                "$": ["defaults", "differentiation"], "duration": 54000.0,
+                "next": {"$": "gene"}, "alternative": {"$": "gene"}
+            }
+        }}},
+        "each": {"start": 9, "step": 9, "stop": 108}, "as": "i", "step": {
+            "each": {"length": {"$": "i"}}, "as": "j", "branch": true, "step": [
+                {"{add}": {"$": ["defaults", "bootstrap"], "trigger": 500}},
+                {"{bootstrap/differentiation}": {"$": "do"}},
+                {"each": {"length": {"$": "i"}}, "step": {
+                    "to": 1200.0, "step": 300.0, "label": "raw_${i}_${j}"
+                }},
+                {"step": {"$": "extract"}, "label": "extracted_${i}_${j}"}
+            ]
+        }
+    }
+}

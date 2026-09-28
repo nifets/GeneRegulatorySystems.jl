@@ -1,0 +1,61 @@
+{   "base_rates": {
+        "$": ["defaults", "gene", "base_rates"], "deactivation": 0.001,
+        "transcription": 0.01, "mrna_decay": 0.01, "translation": 5e-7
+    },
+    "extract": {"{extract-transcriptome-amplified}": {
+        "collect": 0.9, "cycles": 5, "efficiency": 0.8, "dropout": 0.05,
+        "target": 50
+    }},
+    "branch": true,
+    "step": [
+        {
+            "each": [0.01, 0.02], "as": "γ", "step": {
+                "each": {"{logrange}": [0.2, 0.00002, 21]}, "as": "a", "step": {
+                    "do": {"{regulation/v1}": {"genes": [{"base_rates" : {
+                        "$": "base_rates",
+                        "mrna_decay": {"$": "γ"},
+                        "activation": {"$": "a"}
+                    }}]}},
+                    "each": {"length": 10}, "as": "i", "branch": true, "step": [
+                        {"{add}": {"$": ["defaults", "bootstrap"]}},
+                        10800,
+                        {"to": 86400, "step": 60, "label": "on_${γ}_${a}_${i}"}
+                    ]
+                }
+            }
+        },
+        {
+            "each": [0.01, 0.001], "as": "γ", "step": {
+                "each": {"{logrange}": [0.2, 0.00002, 21]}, "as": "d", "step": {
+                    "do": {"{regulation/v1}": {"genes": [{"base_rates" : {
+                        "$": "base_rates",
+                        "mrna_decay": {"$": "γ"},
+                        "activation": 2e-3,
+                        "deactivation": {"$": "d"}
+                    }}]}},
+                    "each": {"length": 10}, "as": "i", "branch": true, "step": [
+                        {"{add}": {"$": ["defaults", "bootstrap"]}},
+                        10800,
+                        {"to": 86400, "step": 60, "label": "off_${γ}_${d}_${i}"}
+                    ]
+                }
+            }
+        },
+        {
+            "do": {"{regulation/v1}": {"genes": [
+                {"base_rates" : {"$": "base_rates", "activation": 0.002}},
+                {"base_rates" : {"$": "base_rates", "activation": 0.02}}
+            ]}},
+            "step": [
+                {"{add}": {"$": ["defaults", "bootstrap"]}},
+                10800,
+                {"to": 86400, "label": "truth", "step": [
+                    {"to": 600},
+                    {"branch": true, "label": "extract", "step": [
+                        {"$": "extract"}
+                    ]}
+                ]}
+            ]
+        }
+    ]
+}

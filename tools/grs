@@ -30,6 +30,9 @@ TOOL="$REPOSITORY/tools/$COMMAND"
 JULIA_VERSION_CHECK
 
 JULIA_VERSION="$("$JULIA" --version)"
+JULIA_MAJOR_MINOR="$("$JULIA" -e '
+    println("$(VERSION.major).$(VERSION.minor)")
+')"
 REPOSITORY_VERSION="$(cd "$REPOSITORY"; "$JULIA" -e '
     import LibGit2;
     @__DIR__() |>
@@ -44,14 +47,15 @@ REPOSITORY_VERSION="$(cd "$REPOSITORY"; "$JULIA" -e '
 # version, Julia version and state (unless the directory is write-protected,
 # which is not really a problem since, though adding latency, `]instantiate` is
 # idempotent and `]precompile` does not write in this directory). If any of
-# these have changed since the last run, we potentially need to potentially
-# reinstantiate and recompile.
-INSTANTIATED_WITH="$(
-    cat "$TOOL"/instantiated_with.version 2>/dev/null || true
-)"
+# these have changed since the last run, we potentially need to reinstantiate
+# and recompile.
+MANIFEST_FILE="$TOOL/Manifest-v$JULIA_MAJOR_MINOR.toml"
+INSTANTIATED_FILE="$TOOL/Instantiated-v$JULIA_MAJOR_MINOR.toml"
+INSTANTIATED_WITH_FILE="$TOOL/Instantiated-v${JULIA_MAJOR_MINOR}-from.version"
+INSTANTIATED_WITH="$(cat "$INSTANTIATED_WITH_FILE" 2>/dev/null || true)"
 if
     [ "$REPOSITORY_VERSION, $JULIA_VERSION" != "$INSTANTIATED_WITH" ] || \
-    ! cmp --silent "$TOOL/Manifest.toml" "$TOOL/Instantiated.toml"
+    ! cmp --silent "$MANIFEST_FILE" "$INSTANTIATED_FILE"
 then
     >&2 echo \
         "Info: '$COMMAND' Julia environment may be stale," \
@@ -70,9 +74,12 @@ then
             -e "import Pkg; Pkg.precompile(strict = true, timing = true)"
     )
     echo "...done."
-    cp "$TOOL/Manifest.toml" "$TOOL/Instantiated.toml" 2>/dev/null || true
+    if [ -e "$TOOL/Manifest.toml" ]; then
+        >&2 echo "Warning: unsupported Julia version '$JULIA_MAJOR_MINOR'."
+    fi
+    cp "$MANIFEST_FILE" "$INSTANTIATED_FILE" 2>/dev/null || true
     echo "$REPOSITORY_VERSION, $JULIA_VERSION" \
-        >"$TOOL/instantiated_with.version" || true
+        >"$INSTANTIATED_WITH_FILE" || true
 fi
 
 shift

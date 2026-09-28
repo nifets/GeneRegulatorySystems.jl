@@ -1,0 +1,29 @@
+[   {"{add}": {"$": ["defaults", "bootstrap"], "1.proteins": 20}},
+    {"each": {"start": 0.5, "step": 0.5, "stop": 16}, "as": "α", "step": {
+        "each": {"start": 0.5, "step": 0.5, "stop": 16}, "as": "β",
+        "branch": true, "step": {
+            "each": {"length": 5}, "as": "i", "branch": true,
+            "step": [
+                {"to": 36000.0, "into": null},
+                {"to": 216000.0, "step": 600.0, "label": "${α}_${β}_${i}"}
+            ],
+            "do": {"{regulation/v1}": {"genes": [
+                {   "$": ["defaults", "gene"],
+                    "activation": [{"from": 1, "at": 2.0}],
+                    "repression": [{"from": 3, "at": 4.0}]
+                },
+                {   "$": ["defaults", "gene"],
+                    "activation": [{"from": 2, "at": 2.0}],
+                    "repression": [{"from": 1, "at": 4.0}]
+                },
+                {   "$": ["defaults", "gene"],
+                    "activation": [{"from": 3, "at": 2.0}],
+                    "repression": [
+                        {"from": 2, "at": {"$": "α"}},
+                        {"from": 1, "at": {"$": "β"}}
+                    ]
+                }
+            ]}}
+        }
+    }}
+]

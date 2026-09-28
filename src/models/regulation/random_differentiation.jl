@@ -168,6 +168,8 @@ contain a `"seed"` mapping if it is specified as part of a
     peripheral::Union{Some{KroneckerNetworks.Template}, Nothing} = nothing
     activation::InterRegulationTemplate = InterRegulationTemplate()
     repression::InterRegulationTemplate = InterRegulationTemplate()
+
+    profile_reactions::Bool = false
 end
 
 """
@@ -259,7 +261,7 @@ function assemble_differentiation(
     )
     duration = rand(randomness, template.duration)
     timer = V1.Gene(
-        name = Symbol(),
+        name = Symbol(""),
         base_rates = rand(randomness, template.timer_base_rates),
     )
 
@@ -330,6 +332,7 @@ function Base.rand(
         else
             base
         end
+    peripheral = V1.Definition(peripheral; template.profile_reactions)
     for gene in peripheral.genes
         for _ in 1:rand(randomness, template.activation.count)
             push!(

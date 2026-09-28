@@ -1,0 +1,11 @@
+{   "do": {"{regulation/v1}": { "genes": [
+        {"$": ["defaults", "gene"],  "activation": [{"from": "R", "at": 2.0}]},
+        {"$": ["defaults", "gene"],  "repression": [{"from": "R", "at": 2.0}]},
+        {"$": ["defaults", "gene"], "proteolysis": [{"from": "R", "k": 0.0001}]}
+    ]}},
+    "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"]}}, {"to": 10800.0},
+        {"{add}": {"R": 50}},                        {"to": 10800.0},
+        {"{multiply}": {"R": 0.01}},                 {"to": 10800.0}
+    ]
+}

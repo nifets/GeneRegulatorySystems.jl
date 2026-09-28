@@ -1,0 +1,20 @@
+{   "do": {"{regulation/differentiation}": {"differentiation": {
+        "$": ["defaults", "differentiation"], "differentiator": "trigger",
+        "duration": 18000.0,
+        "next": {"$": ["defaults", "differentiation", "differentiator"]},
+        "alternative": {"$": ["defaults", "differentiation", "differentiator"]}
+    }}},
+    "each": {"length": 200}, "as": "i", "branch": true, "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"], "trigger": 500}},
+        {"{bootstrap/differentiation}": {"$": "do"}},
+        {"to": 43200.0, "step": 300.0, "label": "cell_${i}"},
+        {"{multiply}": {"proteasomes": 8}},
+        {"to": 10800.0, "step": 300.0, "label": "cell_${i}"},
+        {"{multiply}": {"proteasomes": 0.125}},
+        {"to": 21600.0, "step": 300.0, "label": "cell_${i}"},
+        {"{multiply}": {"proteasomes": 3}},
+        {"to": 10800.0, "step": 300.0, "label": "cell_${i}"},
+        {"{multiply}": {"proteasomes": 0.333}},
+        {"to": 21600.0, "step": 300.0, "label": "cell_${i}"}
+    ]
+}

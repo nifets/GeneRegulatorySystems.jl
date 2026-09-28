@@ -3,7 +3,7 @@
         "base_rates": {
             "activation": 2.5,
             "deactivation": 10.0,
-            "trigger": 0.00000066,
+            "initiation": 0.00000066,
             "transcription": 0.001,
             "processing": 0.02,
             "translation": 0.0000009,

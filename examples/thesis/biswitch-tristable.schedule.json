@@ -1,0 +1,20 @@
+{   "do": {"{regulation/v1}": { "genes": [
+        {"$": ["defaults", "gene"],
+            "activation": [{"from": 1, "at": 181.02, "k": -4}],
+            "repression": [{"from": 2, "at": 500.0, "k": -2}]},
+        {"$": ["defaults", "gene"],
+            "activation": [{"from": 2, "at": 181.02, "k": -4}],
+            "repression": [{"from": 1, "at": 500.0, "k": -2}]}
+    ]}},
+    "each": {"{logrange}": [1, 32768, 16]}, "as": "x0", "step": {
+        "each": {"{logrange}": [1, 32768, 16]}, "as": "y0", "step": {
+            "each": {"length": 5}, "as": "i", "branch": true, "step": [
+                {"{add}": {"$": ["defaults", "bootstrap"],
+                    "1.proteins": {"$": "x0"}, "2.proteins": {"$": "y0"}}},
+                1e5,
+                {"to": 1e5, "step": 1e3, "label": "x0=${x0}_y0=${y0}_i=${i}"}
+            ]
+        }
+    }
+}
+

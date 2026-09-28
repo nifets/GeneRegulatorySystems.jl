@@ -69,7 +69,7 @@ In JSON, a `BaseRatesTemplate` is specified as a JSON object
 {
     "activation": <...>,
     "deactivation": <...>,
-    "trigger": <...>,
+    "initiation": <...>,
     "transcription": <...>,
     "processing": <...>,
     "translation": <...>,
@@ -86,7 +86,7 @@ from which that rate should be sampled from. `"processing"` and
 @kwdef struct BaseRatesTemplate
     activation::Nonnegative{UnivariateDistribution}
     deactivation::Nonnegative{UnivariateDistribution}
-    trigger::Nonnegative{UnivariateDistribution}
+    initiation::Nonnegative{UnivariateDistribution}
     transcription::Nonnegative{UnivariateDistribution}
     translation::Nonnegative{UnivariateDistribution}
     abortion::Nonnegative{UnivariateDistribution}

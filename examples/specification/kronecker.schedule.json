@@ -3,6 +3,7 @@
     "step": [
         {"{add}": {"$": ["defaults", "bootstrap"]}},
         {"{regulation/kronecker}": {
+            "profile_reactions": false,
             "seed": "kronecker-${rootseed}",
             "base_rates": {"$": ["defaults", "gene", "base_rates"]},
             "activation": {

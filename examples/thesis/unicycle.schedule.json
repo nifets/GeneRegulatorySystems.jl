@@ -1,0 +1,9 @@
+{   "do": {"{regulation/v1}": {"genes": [{
+        "base_rates": {
+            "$": ["defaults", "gene", "base_rates"],
+            "activation": 1.0, "deactivation": 0.1, "initiation": 6.6e-6
+        },
+        "repression": [{"from": 1, "at": 70.0, "k": -10}]
+    }]}},
+    "step": [{"{add}": {"$": ["defaults", "bootstrap"]}}, {"to": 108000.0}]
+}

@@ -337,10 +337,12 @@ In JSON, a `Reaction` is specified as a JSON object
 where `<from>` and `<to>` each specify [`Reagents`](@ref) defining the (integer)
 stoichiometries respectively for the reactants and products (of the forward
 reaction), and `<forward>` and `<reverse>` must be JSON numbers defining the
-corresponding rate constants.
+corresponding rate constants. The `<name>` is optional when the reaction is
+specified as part of an `Array`, and when unspecified it will then just be
+chosen automatically by its index.
 
 If present, `<name>` must be a JSON string identifying the reaction, otherwise it
-will be set automatically to `"rxn-<i>"` using the reaction's index
+will be set automatically to `"reaction_<i>"` using the reaction's index
 within its containing list. Names must be unique within a model.
 
 For example,
@@ -362,17 +364,15 @@ as `"rate": <forward>`, setting `<reverse>` to zero.
     to::Reagents = Reagents()
     k⁺::FR = 0.0
     k⁻::RR = 0.0
+    probe::Symbol = name
     properties::Dict{Symbol, Any} = Dict{Symbol, Any}()
 end
 
-Specifications.cast(::Type{Vector{Reaction}}, xs::AbstractVector; context) = [
-    Specifications.cast(
-        Reaction,
-        merge(Dict(:name => "rxn-$i"), x);
-        context,
-    )
-    for (i, x) in enumerate(xs)
-]
+Specifications.cast(::Type{Vector{Reaction}}, xs::AbstractVector; context) =
+    map(enumerate(xs)) do (i, x)
+        name = "reaction_$(lpad(i, ndigits(length(xs)), '0'))"
+        Specifications.cast(Reaction, merge(Dict(:name => name), x); context)
+    end
 
 Specifications.cast(::Type{Reaction}, x::AbstractDict{Symbol}; context) =
     @invoke Specifications.cast(

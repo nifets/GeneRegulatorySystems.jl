@@ -214,6 +214,8 @@ contain a `"seed"` mapping if it is specified as part of a
         first(size(@something(activation, repression, proteolysis).adjacency))
     prefix::String = ""
     approximate::Union{Some{Bool}, Nothing} = nothing
+
+    profile_reactions::Bool = false
 end
 
 """
@@ -413,6 +415,7 @@ function Base.rand(
             for (i, activation, repression, proteolysis) in
                 zip(1:n, activations, repressions, proteolyses)
         ],
+        template.profile_reactions,
     )
 end
 

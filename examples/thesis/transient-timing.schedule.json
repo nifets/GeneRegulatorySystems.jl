@@ -1,0 +1,15 @@
+{"each": {"start": 21600.0, "step": 10800.0, "length": 10}, "as": "T", "step": {
+    "do": {"{regulation/differentiation}": {"differentiation": {
+        "$": ["defaults", "differentiation"],
+        "differentiator": "differentiator",
+        "duration": {"$": "T"},
+        "ratio": 0.5,
+        "next": {"$": ["defaults", "differentiation", "differentiator"]},
+        "alternative": {"$": ["defaults", "differentiation", "differentiator"]}
+    }}},
+    "each": {"length": 20}, "as": "i", "branch": true, "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"], "differentiator": 500}},
+        {"{bootstrap/differentiation}": {"$": "do"}},
+        {"to": 162000.0, "step": 60.0, "label": "${T}_${i}"}
+    ]
+}}

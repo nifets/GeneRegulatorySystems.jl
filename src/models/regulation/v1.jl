@@ -41,7 +41,7 @@ They are specified in JSON as a JSON object
 {
     "activation": <...>,
     "deactivation": <...>,
-    "trigger": <...>,
+    "initiation": <...>,
     "transcription": <...>,
     "processing": <...>,
     "translation": <...>,
@@ -59,7 +59,7 @@ drops `premrnas` from the cascade, so that `transcription` directly produces
 @kwdef struct BaseRates
     activation::Float64
     deactivation::Float64
-    trigger::Float64
+    initiation::Float64
     transcription::Float64
     translation::Float64
     abortion::Float64
@@ -77,7 +77,7 @@ struct Stage
 end
 
 const STAGES = (
-    Stage(:elongations, :trigger, :abortion, false),
+    Stage(:elongations, :initiation, :abortion, false),
     Stage(:premrnas, :transcription, :premrna_decay, false),
     Stage(:mrnas, :processing, :mrna_decay, true),
     Stage(:proteins, :translation, :protein_decay, true),
@@ -227,7 +227,7 @@ instantiate a reaction cascade for this `Gene`. The cascade will include the
 following reactions:
 ```
 @reaction_network begin
-    trigger, active + \$polymerases --> active + elongations
+    initiation, active + \$polymerases --> active + elongations
     transcription, elongations --> premrnas + \$polymerases
     processing, premrnas --> mrnas
     translation, mrnas + \$ribosomes --> mrnas + proteins + \$ribosomes
@@ -254,7 +254,7 @@ catalyst (`mrnas`). This preserves steady-state means but not the dwell time the
 omitted species contributed, so a reduced gene is burstier than the full one.
 
 Omitting `"active"` puts the promoter in quasi-steady state instead, folding its
-occupancy into the `trigger` rate as before, and is incompatible with
+occupancy into the `initiation` rate as before, and is incompatible with
 `"unique": false`. Other genes may regulate this one by naming it, which refers
 to the last species it keeps, or by naming a species explicitly as
 `"<gene>.<species>"`.
@@ -377,8 +377,9 @@ In JSON, a V1 `Definition` is specified as a JSON object
     "reactions": [<Models.Reaction>...],
     "polymerases": <polymerases>,
     "ribosomes": <ribosomes>,
-    "proteasomes": <proteasomes>
-}}
+    "proteasomes": <proteasomes>,
+    "profile_reactions": <profile_reactions>
+}
 ```
 where `[<gene>...]` is a JSON array of [`Gene`](@ref) specifications,
 `[<reaction>...]` is a JSON array of [`Models.Reaction`](@ref)s, and
@@ -390,8 +391,14 @@ these mappings are optional, with the following defaults:
 - `<polymerases>`: `"polymerases"`
 - `<ribosomes>`: `"ribosomes"`
 - `<proteasomes>`: `"proteasomes"`
+- `<profile_reactions>`: `false`
 However, at least one gene or at least one reaction must be specified so that
 the system is not empty.
+
+If `<profile_reactions>` is set, all of the system's reaction specifications
+will be amended to produce additional "probe" species that can then be used to
+observe how often each reaction has occured. Their names are predefined for the
+default cascade but can be overridden for overlay reactions.
 """
 @kwdef struct Definition
     polymerases::Symbol = :polymerases
@@ -399,6 +406,8 @@ the system is not empty.
     proteasomes::Symbol = :proteasomes
     genes::Vector{Gene} = Gene[]
     reactions::Vector{Models.Reaction} = Models.Reaction[]
+
+    profile_reactions::Bool = false
 end
 
 Definition(base::Definition; kwargs...) = Definition(;
@@ -520,6 +529,7 @@ representation(x::Definition) = Dict{Symbol, Any}(
             :proteasomes => "proteasomes",
             :genes => [],
             :reactions => [],
+            :profile_reactions => false,
         ],
     )
 )
@@ -534,7 +544,7 @@ function Models.describe(definition::Definition)
             reaction = Symbol("$(gene).$(kind === :activation ? "deactivation" : "activation")")
         else
             edge_kind = kind === :activation ? :promotes : :inhibits
-            reaction = Symbol("$(gene).trigger")
+            reaction = Symbol("$(gene).initiation")
         end
         (; kind=edge_kind, from=regulator(from), to=reaction)
     end
@@ -593,7 +603,7 @@ death_reaction(::Val{:proteins}, x, k; proteasomes, _...) =
     Reaction(k, [x, proteasomes], [proteasomes])
 death_reaction(::Val, x, k; _...) = Reaction(k, [x], nothing)
 
-function cascade(definition::Gene; polymerases, ribosomes, proteasomes, t)
+function cascade(definition::Gene; polymerases, ribosomes, proteasomes, t, profile = false)
     name = definition.name
     rxs = Reaction[]
 
@@ -634,11 +644,11 @@ function cascade(definition::Gene; polymerases, ribosomes, proteasomes, t)
         previous = i
     end
 
-    ReactionSystem(rxs, t; name)
+    ReactionSystem(profile ? instrument(rxs; t, scope = ParentScope) : rxs, t; name)
 end
 
-function gene(definition::Gene; polymerases, ribosomes, proteasomes, t)
-    result = cascade(definition; polymerases, ribosomes, proteasomes, t)
+function gene(definition::Gene; polymerases, ribosomes, proteasomes, t, profile = false)
+    result = cascade(definition; polymerases, ribosomes, proteasomes, t, profile)
     switching(definition) || return result
     first_transcript(definition) === nothing &&
         (result = extend(result, @network_component (@species active(t);)))
@@ -1008,7 +1018,7 @@ function promoter_rate(
     gene = genes[name]
     EquilibriumRate(
         Symbol("$(name).activity"),
-        indices.parameters[Symbol("$(name).trigger")],
+        indices.parameters[Symbol("$(name).initiation")],
         indices.parameters[Symbol("$(name).activation")],
         indices.parameters[Symbol("$(name).deactivation")],
         regulators(indices, genes, gene, "repression", gene.repression.slots,
@@ -1033,7 +1043,7 @@ function promoter_rate(
     gene.activation.aggregate === thermodynamic || return nothing
     ThermodynamicRate(
         Symbol("$(name).activity"),
-        indices.parameters[Symbol("$(name).trigger")],
+        indices.parameters[Symbol("$(name).initiation")],
         indices.parameters[Symbol("$(name).activation")],
         indices.parameters[Symbol("$(name).deactivation")],
         regulators(indices, genes, gene, "repression", gene.repression.slots,
@@ -1191,8 +1201,8 @@ function regulation(
     activation_rate(target::Gene) = k_on(target) * inactive(target)
     deactivation_rate(target::Gene) = k_off(target) * genes[target.name].active
 
-    trigger_rate(target::Gene) =
-        make_parameter(Symbol("$(target.name).trigger"), effective[target.name][:trigger])
+    initiation_rate(target::Gene) =
+        make_parameter(Symbol("$(target.name).initiation"), effective[target.name][:initiation])
 
 
     # Regulation for the whole network:
@@ -1244,14 +1254,14 @@ function regulation(
                         (regulator_of(slot.from) => Int8(-1) for slot in target.repression.slots)...
                     ]
                     annotate(Reaction(
-                        trigger_rate(target) * p_promoter(target),
+                        initiation_rate(target) * p_promoter(target),
                         [polymerases, catalysts...],
                         [getproperty(genes[target.name], transcript), catalysts...,
                             (held ? () : (polymerases,))...];
                         metadata = [:propensity_directions => directions]
-                    ), :trigger;
+                    ), :initiation;
                         owner=target.name,
-                        parameters=Dict(:rate => Symbol("$(target.name).trigger")))
+                        parameters=Dict(:rate => Symbol("$(target.name).initiation")))
                 end,
                 # ...repression (by proteolysis)
                 map(target.proteolysis.slots) do (; from, k)
@@ -1314,6 +1324,20 @@ function regulation(
         ]
     ]
     (; reactions, observed)
+end
+
+instrument(rs::AbstractVector; t, scope = identity) = map(rs) do r
+    probe = get(Dict{Symbol, Any}(r.metadata), :kind, :reaction)
+    Reaction(
+        r.rate,
+        r.substrates,
+        append!(copy(r.products), [scope(only(@species $probe(t)))]),
+        r.substoich,
+        vcat(r.prodstoich, [1]);
+        netstoich = nothing,
+        r.metadata,
+        r.only_use_rate,
+    )
 end
 
 const JUMP_PROCESSES_METHODS = Dict(
@@ -1561,10 +1585,12 @@ function build(definition::Definition;
             ribosomes = ParentScope(ribosomes),
             proteasomes = ParentScope(proteasomes);
             t,
+            profile = definition.profile_reactions,
         )
         for g in definition.genes
     )
     (; reactions, observed) = regulation(genes; definition, t)
+    definition.profile_reactions && (reactions = instrument(reactions; t))
     @named reaction_system = ReactionSystem(
         reactions,
         t;
@@ -1574,7 +1600,7 @@ function build(definition::Definition;
             getproperty(genes[g.name], kind) => value
             for g in definition.genes
             for (kind, value) in rate_values(g)
-            if switching(g) || kind !== :trigger
+            if switching(g) || kind !== :initiation
         )
     )
     reaction_system = complete(reaction_system)
@@ -1609,7 +1635,7 @@ Knock out `genes` from a V1 model.
 With `soft=false` (default, *hard* knockout), the genes are structurally removed
 from the `Definition` and the model is fully recompiled.
 
-With `soft=true` (*soft* knockout), the `trigger` reaction rate is zeroed for
+With `soft=true` (*soft* knockout), the `initiation` reaction rate is zeroed for
 each knocked-out gene, without recompiling the model.
 
 # Specification
@@ -1626,7 +1652,7 @@ knockout(specification::AbstractDict{Symbol}) = knockout(
 
 function knockout(model::Models.Wrapped; genes, soft=false)
     if soft
-        Models.remake(model, Dict(Symbol("$(g).trigger") => 0.0 for g in genes))
+        Models.remake(model, Dict(Symbol("$(g).initiation") => 0.0 for g in genes))
     else
         knockout(model.definition, model.model; genes)
     end

@@ -1,0 +1,20 @@
+{   "gene": {"base_rates": {
+        "$": ["defaults", "gene", "base_rates"],
+        "activation": 1.0, "deactivation": 1000.0, "initiation": 6.6e-6
+    }},
+    "step": {
+        "do": {"{regulation/v1}": {"genes": [
+            {   "$": "gene", "name": "A",
+                "activation": [{"from": "input", "at": 1.0}]},
+            {   "$": "gene", "name": "R",
+                "activation": [{"from": "A", "at": 3.0}]},
+            {   "$": "gene", "name": "X",
+                "activation": [{"from": "A", "at": 0.1}],
+                "repression": [{"from": "R", "at": 10.0}]}
+        ]}},
+        "each": {"length": 5}, "branch": true, "step": [
+            {"{add}": {"$": ["defaults", "bootstrap"]}}, {"to": 10800.0},
+            {"{add}": {"input": 500}},                   {"to": 21600.0}
+        ]
+    }
+}

@@ -1,0 +1,20 @@
+{   "do": {"{regulation/v1}": { "genes": [
+        {"$": ["defaults", "gene"]},
+        {"$": ["defaults", "gene"], "proteolysis": [{"from": 2, "k": 0.0001}]},
+        {"$": ["defaults", "gene"],  "activation": [{"from": 3, "at": 5.0}]},
+        {"$": ["defaults", "gene"],  "repression": [{"from": 4, "at": 5.0}]}
+    ]}},
+    "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"]}},           {"to": 36000.0},
+        {"each": [10.0, 0.1, 100.0], "as": "α", "step": [
+            {"{multiply}": {
+                "1.proteins": {"$": "α"}, "2.proteins": {"$": "α"},
+                "3.proteins": {"$": "α"}, "4.proteins": {"$": "α"}
+            }},                                                {"to": 36000.0},
+            {"{multiply}": {
+                "1.mrnas": {"$": "α"}, "2.mrnas": {"$": "α"},
+                "3.mrnas": {"$": "α"}, "4.mrnas": {"$": "α"}
+            }},                                                {"to": 36000.0}
+        ]}
+    ]
+}

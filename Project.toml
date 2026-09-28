@@ -1,6 +1,6 @@
 name = "GeneRegulatorySystems"
 uuid = "321a2579-640d-4198-9790-c715c19becf3"
-version = "0.4.1"
+version = "0.5.0"
 authors = ["lmshk "]
 
 [deps]

@@ -1,0 +1,11 @@
+{"each": {"{logrange}": [0.1, 100.0, 31]}, "as": "-k", "step": {
+    "do": {"{regulation/v1}": { "genes": [{
+        "$": ["defaults", "gene"],
+        "activation": [{"from": 1, "at": 181.02, "-k": {"$": "-k"}}]
+    }]}},
+    "each": {"{logrange}": [1, 32768, 16]}, "as": "x0",
+    "branch": true, "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"], "1.proteins": {"$": "x0"}}},
+        {"label": "at_${-k}_from_${x0}", "step": 21600.0}
+    ]
+}}

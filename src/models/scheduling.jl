@@ -603,7 +603,7 @@ end
 """
     reify(x, path; load = nothing)
 
-Recreate an object by repeatedly descending on the definition object `x`, as
+Recreate an object by repeatedly descending into the definition object `x`, as
 selected by `path`, expanding the required definitions along the way.
 
 When called directly, `x` will typically be a `Schedule`, but it doesn't have to

@@ -1,0 +1,12 @@
+{   "do": {"{regulation/v1}": {"genes": [{
+        "$": ["defaults", "gene"],
+        "activation": [{"from": 1, "at": 181.02, "k": -4}]
+    }]}},
+    "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"]}}, {"to": 108000.0},
+        {"each": {"length": 6}, "step": [
+            {"{add}": {"1.proteins": 1000}},         {"to": 108000.0},
+            {"{multiply}": {"1.proteins": 0.1}},     {"to": 108000.0}
+        ]}
+    ]
+}

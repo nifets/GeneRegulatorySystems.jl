@@ -1,0 +1,20 @@
+{   "gene": {"base_rates": {
+        "$": ["defaults", "gene", "base_rates"],
+        "activation": 1.0,
+        "deactivation": 1.0
+    }},
+    "each": {"{logrange}": [0.1, 100.0, 61]},
+    "as": "α",
+    "branch": true,
+    "step": {
+        "do": {"{regulation/v1}": { "genes": [
+            {"$": "gene", "repression": [{"from": 2, "at": {"$": "α"}}]},
+            {"$": "gene", "repression": [{"from": 1, "at": {"$": "α"}}]}
+        ]}},
+        "step": [
+            {"{add}": {"$": ["defaults", "bootstrap"], "1.proteins": 10}},
+            {"to": 108000.0, "label": "α=${α}"}
+        ]
+    }
+}
+

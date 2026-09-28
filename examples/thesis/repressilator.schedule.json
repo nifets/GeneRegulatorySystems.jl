@@ -1,0 +1,52 @@
+{   "Δt": {"full": 489600.0, "half": 244800.0, "off": 57600.0, "on": 3600.0},
+    "repressilator": {"genes": [
+        {   "$": ["defaults", "gene"],
+            "activation": [{"from": 1, "at": 3.5}],
+            "repression": [{"from": 3, "at": 6.0}]},
+        {   "$": ["defaults", "gene"],
+            "activation": [{"from": 2, "at": 3.5}],
+            "repression": [{"from": 1, "at": 6.0}]},
+        {   "$": ["defaults", "gene"],
+            "activation": [{"from": 3, "at": 3.5}],
+            "repression": [{"from": 2, "at": 6.0}]}
+    ]},
+    "bootstrap": {"{add}": {"$": ["defaults", "bootstrap"], "1.proteins": 50}},
+    "step": {
+        "do": {"{regulation/v1}": {"$": "repressilator"}},
+        "illuminated": {"{regulation/v1}": {
+            "$": "repressilator",
+            "reactions": [{"from": [2], "rate": 0.002, "to": []}]
+        }},
+        "branch": true,
+        "step": [
+            [
+                {"$": "bootstrap"},
+                {"to": {"$": ["Δt", "full"]}, "label": "regular"},
+                {"each": {"length": 5}, "as": "i", "branch": true, "step": [
+                    {"to": {"$": ["Δt", "half"]}, "label": "regular-${i}"},
+                    {"branch": true, "step": [
+                        {"to": {"$": ["Δt", "half"]}, "label": "O-${i}"},
+                        [
+                            {"{add}": {"3.proteins": 1000}},
+                            {"to": {"$": ["Δt", "half"]}, "label": "X-${i}"}
+                        ]
+                    ]}
+                ]}
+            ],
+            [
+                {"$": "bootstrap"},
+                {"to": {"$": ["Δt", "full"]}, "label": "entrained", "step": [
+                    {"to": {"$": ["Δt", "off"]}},
+                    {"to": {"$": ["Δt", "on"]}, "do": {"$": "illuminated"}}
+                ]},
+                {"each": {"length": 5}, "as": "i", "branch": true, "step": {
+                    "to": {"$": ["Δt", "full"]}, "label": "entrained-${i}",
+                    "step": [
+                        {"to": {"$": ["Δt", "off"]}},
+                        {"to": {"$": ["Δt", "on"]}, "do": {"$": "illuminated"}}
+                    ]
+                }}
+            ]
+        ]
+    }
+}

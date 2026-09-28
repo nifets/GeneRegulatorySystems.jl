@@ -1,0 +1,11 @@
+{   "do": {"{regulation/v1}": {"genes": [{"$": ["defaults", "gene"]}]}},
+    "less": {"{regulation/v1}": {"genes": [{"base_rates": {
+        "$": ["defaults", "gene", "base_rates"],
+        "activation": 1.0
+    }}]}},
+    "step": [
+        {"{add}": {"$": ["defaults", "bootstrap"]}},
+        {"to": 10800.0}, {"{add}": {"1.mrnas": 20}}, {"to": 10800.0},
+        {"to": 10800.0, "do": {"$": "less"}}
+    ]
+}

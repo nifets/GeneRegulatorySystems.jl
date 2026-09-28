@@ -72,7 +72,7 @@ For example,
 base_rates = Models.V1.BaseRates(
     activation = 2.5,
     deactivation = 10.0,
-    trigger = 6.6e-7,
+    initiation = 6.6e-7,
     transcription = 0.001,
     processing = 0.02,
     translation = 2.5e-9,
@@ -102,7 +102,7 @@ This same model can also be constructed from a JSON specification, either in its
 base_rates = Dict(
     :activation => 2.5,
     :deactivation => 10.0,
-    :trigger => 6.6e-7,
+    :initiation => 6.6e-7,
     :transcription => 0.001,
     :processing => 0.02,
     :translation => 2.5e-9,
@@ -132,7 +132,7 @@ base_rates_json = """
 {
     "activation": 2.5,
     "deactivation": 10.0,
-    "trigger": 6.6e-7,
+    "initiation": 6.6e-7,
     "transcription": 0.001,
     "processing": 0.02,
     "translation": 2.5e-9,

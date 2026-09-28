@@ -5,6 +5,7 @@
         {"to": 50000.0}
     ],
     "do": {"{regulation/differentiation}": {
+        "profile_reactions": false,
         "differentiation": {
             "$": ["defaults", "differentiation"],
             "differentiator": "trigger",

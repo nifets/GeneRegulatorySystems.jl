@@ -29,7 +29,6 @@ The `index.arrow` table (with one row per simulation segment) contains the follo
 * `label`: Custom `String` attached to the simulation segment if `"label"` was set in the schedule specification. This can be used to filter simulation segments, for example to [export](@ref "`export` tool") them.
 * `count`: The `Int64` count of events recorded in the event stream referenced by `into` related to this simulation segment. If output was disabled for this segment (because `"into": null` was specified in the schedule), `count` will be `0`.
 * `into`: `String` filename (relative to the directory containing the `index.arrow` file) naming the Arrow stream file containing the events recorded for this simulation segment, in long format (see below).
-* `seed`: 4-element `UInt64[]` recording the state of the random number generator right before this simulation segment was executed. This can be used to prepare a simulation state for restarting the simulation at this segment, or to repeat this simulation segment in isolation. This column will also indicate whether randomness was consumed while executing a segment.
 
 !!! tip
     From Julia, this file can for example be loaded using *Arrow.jl* and used with *DataFrames.jl*:
