@@ -122,10 +122,10 @@ settings() = @add_arg_table! ArgParseSettings(
             dimensions will be collected into a thus-named layer; matches are \
             attempted in order, and the first match determines which layer the \
             dimension will be attached to. If the output format supports it, \
-            layers directly represented in the output. (Currently, this only \
+            layers are directly represented in the output. (Currently, this only \
             applies only to the `h5ad` format.) The set of (renamed) \
             dimensions must be homogenous between all layers, or an error will \
-            be raised. 
+            be raised.\
         """
 
     "--dry"

@@ -45,6 +45,25 @@ function Logging.handle_message(
     end
 end
 
+@kwdef struct TimingProgressLogger <: ProgressLogger
+    t0::UInt64 = time_ns()
+end
+
+function Logging.handle_message(
+    logger::TimingProgressLogger,
+    _level,
+    message::Symbol,
+    _ignored...;
+    at,
+    rest...,
+)
+    what = message
+    what in (:advancing, :collecting) && get(rest, :done, 0) != 0 && return
+    t = time_ns() - logger.t0
+    JSON.json(stderr,(; t, at, what, rest...))
+    println(stderr)
+end
+
 @kwdef struct BarProgressLogger <: ProgressLogger
     ids::Dict{String, UUID} = Dict{String, UUID}()
     todo::Dict{String, Real} = Dict{String, Real}()
@@ -310,10 +329,12 @@ function (sink::Sink)(
 end
 
 function with_progress(run!, progress::Symbol)
-    if progress == :bars && stdout isa Base.TTY
+    if progress === :bars && stdout isa Base.TTY
         with_logger(run!, TeeLogger(current_logger(), BarProgressLogger()))
-    elseif progress == :simple
+    elseif progress === :simple
         with_logger(run!, TeeLogger(current_logger(), SimpleProgressLogger()))
+    elseif progress === :timing
+        with_logger(run!, TeeLogger(current_logger(), TimingProgressLogger()))
     else
         run!()
     end

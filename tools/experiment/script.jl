@@ -57,6 +57,7 @@ settings() = @add_arg_table! ArgParseSettings(
             Specify how to report progress: \
             with `--progress=bars` show progress bars; \
             with `--progress=simple` just print messages; \
+            with `--progress=timing` write JSON with timing information; \
             with `--progress=none` don't show progress.\
         """
 

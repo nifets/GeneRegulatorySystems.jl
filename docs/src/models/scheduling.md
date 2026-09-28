@@ -72,7 +72,7 @@ To see which objects can be defined in the language using the `{"{...}": ...}` s
 
 ## Schedule semantics
 
-When a `Schedule` is invoked to advance the simulation state (i.e. by calling it as a functor, like any `Model`), its exact behavior is determined by the type of its (top-level) `specification`, which may involve constructing and recursively avancing on nested `Schedule`s until the recursion terminates on the non-`Schedule` (*primitive*) `Model`s to actually produce and execute simulation segments.
+When a `Schedule` is invoked to advance the simulation state (i.e. by calling it as a functor, like any `Model`), its exact behavior is determined by the type of its (top-level) `specification`, which may involve constructing and recursively advancing on nested `Schedule`s until the recursion terminates on the non-`Schedule` (*primitive*) `Model`s to actually produce and execute simulation segments.
 These terminal models are wrapped in `Primitive`s (which are also `<: Model`) that delegate simulation but add hooks for output handling and progress reporting and further automatically convert the simulation state to the representation required by the wrapped model.
 
 ```@docs

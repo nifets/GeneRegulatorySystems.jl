@@ -88,7 +88,7 @@ grs inspect path/to/results/
 ```
 and see [Inspect tool][docs-inspect] for details.
 
-You can export results from their native (long) format to a wide format using the `grs export` tool. Its default behavior is to include the values of all trajectory dimensions at the end of each simulation segment, although both the included dimensions and considered segments can be pre-filtered; run `grs export --help` for options, and see [Export tool][docs-export] for details.
+You can export results from their native (long) format to a wide format using the `grs export` tool. Its default behavior is to include the values of all trajectory dimensions at the end of the last simulation segment for each unique label, although both the included dimensions and considered segments can be pre-filtered; run `grs export --help` for options, and see [Export tool][docs-export] for details.
 
 ## Updating
 

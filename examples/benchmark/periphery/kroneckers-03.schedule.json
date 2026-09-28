@@ -1,0 +1,54 @@
+{
+    "label": "kronecker_8g",
+    "note": "2^12 randomly SKG-linked 2^3-gene systems, 100x20h, every h",
+    "realizations": {"count": 4096, "size": 3},
+    "replicates": {"count": 100, "to": 72000.0, "step": 3600.0},
+    "step": {
+        "each": {"length": {"$": ["realizations", "count"]}},
+        "as": "i",
+        "branch": true,
+        "step": {
+            "do": {"{regulation/kronecker}": {
+                "seed": "${rootseed}-${i}",
+                "base_rates": {"$": ["defaults", "gene", "base_rates"]},
+                "activation": {
+                    "adjacency": {
+                        "initiator": [[0.8, 0.3], [0.2, 0.5]],
+                        "power": {"$": ["realizations", "size"]},
+                        "expected_links_per_gene": 0.8
+                    },
+                    "at": ["LogNormal", 2.0, 1.0]
+                },
+                "repression": {
+                    "adjacency": {
+                        "initiator": [[0.3, 0.6], [0.4, 0.1]],
+                        "power": {"$": ["realizations", "size"]},
+                        "expected_links_per_gene": 1.2
+                    },
+                    "at": ["LogNormal", 2.0, 1.0]
+                }
+            }},
+            "each": {"length": {"$": ["replicates", "count"]}},
+            "as": "j",
+            "branch": true,
+            "step": [
+                {"{add}": {"$": ["defaults", "bootstrap"]}},
+                {
+                    "label": "${label}_${i}_${j}",
+                    "to": {"$": ["replicates", "to"]},
+                    "step": [
+                        {"$": ["replicates", "step"]},
+                        {
+                            "label": "${label}_${i}_${j}_extracted",
+                            "branch": true,
+                            "step": [{"{extract-transcriptome-amplified}": {
+                                "collect": 0.9, "cycles": 5, "efficiency": 0.8,
+                                "dropout": 0.05, "target": 5000.0
+                            }}]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+}

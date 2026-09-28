@@ -26,7 +26,7 @@ artifact(::Val{:events}, into) = "events$into.stream.arrow"
 
 function warn_incompatible_versions(location)
     specification = JSON.parsefile(artifact(:specification; prefix = location))
-    specification isa Dict || return
+    specification isa AbstractDict || return
     haskey(specification, "_version") || return
 
     warned = false

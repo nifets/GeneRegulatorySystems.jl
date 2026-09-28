@@ -159,7 +159,7 @@ forms:
   binding's `repr` for `String`s and `Number`s, or the literal `"__omitted__"`
   otherwise.
 
-Substitution will in geneneral not return independent objects but rather alias
+Substitution will in general not return independent objects but rather alias
 intermediate `Dict`s, `Vector`s and other objects into the substituted objects
 if they contain no substitutions of of their own. In other words, the produced
 data structures are treated as *persistent* (and therefore *immutable*) during
