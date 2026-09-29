@@ -964,6 +964,10 @@ function weighted(f::Base.Fix2{typeof(genmean)}, hs, ws, name, kind)
     ifelse(W > 0, ifelse(abs(p) < 1e-6, exp(logmean), (num / W)^inv(p)), one(Num))
 end
 
+weight_indices(indices, gene, kind, slots, ::typeof(thermodynamic)) = SciML.ParameterIndex[]
+weight_indices(indices, gene, kind, slots, _) =
+    [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).w")] for slot in slots]
+
 function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slots, aggregate)
     aggregate isa typeof(one ∘ typeof ∘ first) && return Regulators(
         Int[], SciML.ParameterIndex[], SciML.ParameterIndex[], SciML.ParameterIndex[])
@@ -972,7 +976,7 @@ function regulators(indices::SciML.Indices, genes, gene::Gene, kind::String, slo
         [indices.unknowns[regulator(slot.from)] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).at")] for slot in slots],
         [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).k")] for slot in slots],
-        [indices.parameters[Symbol("$(gene.name).$(kind).$(slot.from).w")] for slot in slots],
+        weight_indices(indices, gene, kind, slots, aggregate),
     )
 end
 
