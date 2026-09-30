@@ -734,15 +734,18 @@ total_duration = isnothing(schedule!) ? 0.0 : let total = Ref(0.0)
     total[]
 end
 
-# ╔═╡ 180bf479-2269-4d94-a9f6-b3c060c17ab9
-track_options = intersect([:activity, :elongations, :premrnas, :mrnas, :proteins, :active, :inactive], unique(vcat(
-    [:activity],
-    [
-        Symbol(last(split(string(node.name), '.')))
-        for node in network.nodes
-        if node.kind === :species && !isnothing(node.parent)
-    ],
-)))
+# ╔═╡ c754d5a7-e6ca-4bdc-bfd2-9b72f077fdf8
+track_options = let found = unique(vcat(
+	[:activity],
+	[
+		Symbol(last(split(string(node.name), '.')))
+		for node in network.nodes
+		if node.kind === :species && !isnothing(node.parent)
+	],
+	))
+	order = [:activity, :elongations, :premrnas, :mrnas, :proteins, :active, :inactive]
+	vcat(intersect(order, found), setdiff(found, order))
+end
 
 # ╔═╡ 5f81c7aa-273c-49e2-ae61-f473f810d6c3
 default_tracks = string.(filter(in((:activity, :mrnas, :proteins)), track_options))
@@ -1275,7 +1278,7 @@ dashboard_area("header", app_header)
 # ╠═a1d5e8f2-4b73-4c96-8e05-71fc32a9b6d8
 # ╠═a8d4dcb7-33b0-44ef-8736-8cce40bd6eb7
 # ╟─525c8855-9758-4d61-a8da-a616396be848
-# ╠═180bf479-2269-4d94-a9f6-b3c060c17ab9
+# ╠═c754d5a7-e6ca-4bdc-bfd2-9b72f077fdf8
 # ╠═5f81c7aa-273c-49e2-ae61-f473f810d6c3
 # ╠═fc7d5237-870d-4549-9b95-d6eb7d508203
 # ╠═1a7f39c4-5d82-4e60-b3a1-8c46f207de92

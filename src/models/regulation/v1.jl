@@ -74,13 +74,15 @@ struct Stage
     birth::Symbol
     death::Symbol
     persists::Bool
+    birth_probe::Symbol
+    death_probe::Symbol
 end
 
 const STAGES = (
-    Stage(:elongations, :initiation, :abortion, false),
-    Stage(:premrnas, :transcription, :premrna_decay, false),
-    Stage(:mrnas, :processing, :mrna_decay, true),
-    Stage(:proteins, :translation, :protein_decay, true),
+    Stage(:elongations, :initiation, :abortion, false, :initiated, :aborted),
+    Stage(:premrnas, :transcription, :premrna_decay, false, :transcribed, :premrnas_decayed),
+    Stage(:mrnas, :processing, :mrna_decay, true, :processed, :mrnas_decayed),
+    Stage(:proteins, :translation, :protein_decay, true, :translated, :proteins_decayed),
 )
 
 available(rates::BaseRates, species::Symbol) = species !== :premrnas ||
@@ -607,10 +609,11 @@ function cascade(definition::Gene; polymerases, ribosomes, proteasomes, t, profi
     name = definition.name
     rxs = Reaction[]
 
-    add(kind, reaction) = push!(rxs, annotate(
+    add(kind, probe, reaction) = push!(rxs, annotate(
         reaction,
         kind;
         owner=name,
+        probe,
         parameters=Dict(:rate => Symbol("$(name).$(kind)"))
     ))
 
@@ -624,27 +627,27 @@ function cascade(definition::Gene; polymerases, ribosomes, proteasomes, t, profi
             if switching(definition)
                 active = species_variable(:active; t)
                 held = stage.species === :elongations
-                add(STAGES[1].birth, Reaction(make_parameter(STAGES[1].birth),
+                add(STAGES[1].birth, STAGES[1].birth_probe, Reaction(make_parameter(STAGES[1].birth),
                     [active, polymerases, catalysts...],
                     [active, target, catalysts...,
                         (held ? () : (polymerases,))...]))
             end
         else
-            kind = STAGES[previous + 1].birth
+            (; birth, birth_probe) = STAGES[previous + 1]
             source = species_variable(STAGES[previous].species; t)
             released = STAGES[previous].species === :elongations ? (polymerases,) : ()
-            add(kind, Reaction(make_parameter(kind),
+            add(birth, birth_probe, Reaction(make_parameter(birth),
                 [source, catalysts...],
                 [target, catalysts..., released...,
                     (STAGES[previous].persists ? (source,) : ())...]))
         end
 
-        add(stage.death, death_reaction(Val(stage.species), target,
+        add(stage.death, stage.death_probe, death_reaction(Val(stage.species), target,
             make_parameter(stage.death); polymerases, proteasomes))
         previous = i
     end
 
-    ReactionSystem(profile ? instrument(rxs; t, scope = ParentScope) : rxs, t; name)
+    ReactionSystem(profile ? instrument(rxs; t) : rxs, t; name)
 end
 
 function gene(definition::Gene; polymerases, ribosomes, proteasomes, t, profile = false)
@@ -1228,6 +1231,7 @@ function regulation(
                             ]]
                         ), :deactivation;
                             owner=target.name,
+                            probe=:deactivated,
                             parameters=Dict(:rate => Symbol("$(target.name).deactivation")))
 
                         # ...repression (by tempering promoter activation)
@@ -1243,6 +1247,7 @@ function regulation(
                             ]]
                         ), :activation;
                             owner=target.name,
+                            probe=:activated,
                             parameters=Dict(:rate => Symbol("$(target.name).activation")))
                     ]
                 else
@@ -1265,6 +1270,7 @@ function regulation(
                         metadata = [:propensity_directions => directions]
                     ), :initiation;
                         owner=target.name,
+                        probe=:initiated,
                         parameters=Dict(:rate => Symbol("$(target.name).initiation")))
                 end,
                 # ...repression (by proteolysis)
@@ -1284,6 +1290,7 @@ function regulation(
                     annotate(reaction, :proteolysis;
                         owner=target.name,
                         from,
+                        probe=Symbol("proteolyzed_by_$(from)"),
                         gene_link=:proteolysis,
                         parameters=Dict(:rate => Symbol("$(target.name).proteolysis.$(from).k")))
                 end
@@ -1303,6 +1310,7 @@ function regulation(
             ), :reaction;
                 name,
                 direction=:forward,
+                probe=Symbol("$(name)_forward"),
                 parameters=Dict(
                     :k⁺ => Symbol("reaction.$(name).k⁺")
                 ))
@@ -1320,6 +1328,7 @@ function regulation(
             ), :reaction;
                 name,
                 direction=:reverse,
+                probe=Symbol("$(name)_reverse"),
                 parameters=Dict(
                     :k⁻ => Symbol("reaction.$(name).k⁻")
                 ))
@@ -1330,12 +1339,17 @@ function regulation(
     (; reactions, observed)
 end
 
-instrument(rs::AbstractVector; t, scope = identity) = map(rs) do r
-    probe = get(Dict{Symbol, Any}(r.metadata), :kind, :reaction)
+probe_local(r) = Dict{Symbol, Any}(r.metadata)[:probe]
+
+probe_owned(r) = let owner = get(Dict{Symbol, Any}(r.metadata), :owner, nothing)
+    owner === nothing ? probe_local(r) : Symbol("$(owner).$(probe_local(r))")
+end
+
+instrument(rs::AbstractVector; t, probe = probe_local) = map(rs) do r
     Reaction(
         r.rate,
         r.substrates,
-        append!(copy(r.products), [scope(only(@species $probe(t)))]),
+        append!(copy(r.products), [species_variable(probe(r); t)]),
         r.substoich,
         vcat(r.prodstoich, [1]);
         netstoich = nothing,
@@ -1594,7 +1608,7 @@ function build(definition::Definition;
         for g in definition.genes
     )
     (; reactions, observed) = regulation(genes; definition, t)
-    definition.profile_reactions && (reactions = instrument(reactions; t))
+    definition.profile_reactions && (reactions = instrument(reactions; t, probe = probe_owned))
     @named reaction_system = ReactionSystem(
         reactions,
         t;

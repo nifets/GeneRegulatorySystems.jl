@@ -581,6 +581,18 @@ function render!(
     axis
 end
 
+function extent(trajectories::Trace{<:AbstractDict})
+    segments = unique(
+        segment
+        for group in values(trajectories.catenations)
+        for catenation in values(group)
+        for segment in catenation.segments
+    )
+    isempty(segments) && return 0.0, 1.0
+    records = trajectories.records[segments]
+    minimum(record.from for record in records), maximum(record.to for record in records)
+end
+
 function render(
     trajectories::Trace{<:AbstractDict};
     tracks,
@@ -602,10 +614,7 @@ function render(
     selected_genes = Set(last(selected_genes, gene_limit))
     figure = Figure(size=(1200, 180 * max(1, length(tracks))))
     axes = Axis[]
-    from = isempty(trajectories.records) ? 0.0 :
-        minimum(segment.from for segment in trajectories.records)
-    to = isempty(trajectories.records) ? 1.0 :
-        maximum(segment.to for segment in trajectories.records)
+    from, to = extent(trajectories)
 
     for (row, kind) in enumerate(tracks)
         type = seriestype(kind)
