@@ -371,8 +371,9 @@ end
 
 net_stoichiometry(::JumpProcesses.AbstractAggregatorAlgorithm, ids, jumps) = (;)
 
-net_stoichiometry(::JumpProcesses.HybridTau, ids, jumps) =
-    (; crj_stoich = crj_stoichiometry(ids, jumps))
+net_stoichiometry(aggregator::JumpProcesses.HybridTau, ids, jumps) = (;
+    crj_stoich = crj_stoichiometry(ids, jumps),
+    net_stoichiometry(aggregator.exact, ids, jumps)...)
 
 net_stoichiometry(::JumpProcesses.TauSplitting, ids, jumps) = (;
     jumptostoich_map = crj_stoichiometry(ids, jumps))
