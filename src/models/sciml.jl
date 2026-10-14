@@ -647,6 +647,8 @@ function Models.adapt!(x::JumpState, f!::Model{FlatState}, ::Val{false})
     fs
 end
 
+Models.adapt!(x::JumpState, ::Models.Instant{Any}, ::Val{false}) = x
+
 # HACK: JumpProcesses.remake mutates the original problem.
 # see: https://github.com/SciML/JumpProcesses.jl/issues/416
 # and https://github.com/SciML/JumpProcesses.jl/issues/554

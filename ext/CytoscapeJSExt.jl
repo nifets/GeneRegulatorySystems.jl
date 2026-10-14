@@ -211,7 +211,7 @@ function link_element(link::Vis.Link, network::Vis.Network, ::Val{V}, strength_r
     isnothing(label) || (data = merge(data, (; label)))
     if haskey(link.properties, :at)
         at = Float64(get(link.properties, :at, 1))
-        data = merge(data, (; at, strengthNorm=inv(1 + sqrt(at / strength_reference))))
+        data = merge(data, (; at, strengthNorm=clamp(log(strength_reference * 10 / at) / log(100), 0, 1)))
     end
     if haskey(link.properties, :w)
         w = Float64(get(link.properties, :w, 1))
@@ -292,8 +292,8 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         (; selector="""node.reaction[view = "gene"]""", style=Dict(
             "width" => 36,
             "height" => 27,
-            "font-size" => 8,
-            "text-margin-y" => -6
+            "font-size" => 16,
+            "text-margin-y" => -10
         )),
         (; selector="node.dimmed", style=Dict(
             "opacity" => 0.3,
@@ -391,7 +391,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "events" => "no",
         )),
         (; selector="edge.activation[strengthNorm], edge.repression[strengthNorm]", style=Dict(
-            "width" => "mapData(strengthNorm, 0, 1, 1, 5)",
+            "width" => "mapData(strengthNorm, 0, 1, 0.5, 7)",
         )),
 
         (; selector="edge.inhibits", style=Dict(
@@ -782,8 +782,8 @@ function inline_parameters()
 
             for (const { node, container } of anchors.values()) {
                 const geneView = node.data("view") === "gene";
-                const fontSize = geneView ? 6 : 1.8
-                const offset = geneView ? 6 : 2/3;
+                const fontSize = geneView ? 12 : 1.8
+                const offset = geneView ? 10 : 2/3;
                 if (node.removed() || !node.visible() || node.hasClass("unmatched")) {
                     container.style.display = "none";
                     continue;
