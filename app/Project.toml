@@ -21,7 +21,7 @@ WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 [sources]
 GeneRegulatorySystems = {path = ".."}
-Pluto = {rev = "1fb98297ad471796cb6d5ea185ede166a4e4dad2", url = "https://github.com/JuliaPluto/Pluto.jl"}
+Pluto = {rev = "38496f0ed9732e1559d0eefb78e7e8d1b4cb3154", url = "https://github.com/JuliaPluto/Pluto.jl"}
 
 [compat]
 Pluto = "1"
