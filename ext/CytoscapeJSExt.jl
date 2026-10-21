@@ -12,6 +12,7 @@ const GENE_WIDTH = 144
 const GENE_HEIGHT = 80
 const GENE_PADDING = 6
 const SPECIES_SIZE = 8
+const MIN_ZOOMED_FONT_SIZE = 4
 const ORPHAN_SPECIES_SIZE = 60
 const GENE_CHILD_WIDTH = GENE_WIDTH - SPECIES_SIZE - 2 * GENE_PADDING
 const GENE_CHILD_HEIGHT = GENE_HEIGHT - SPECIES_SIZE - 2 * GENE_PADDING
@@ -225,7 +226,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         # nodes
         (; selector="node", style=Dict(
             "font-family" => fontfamily,
-            "min-zoomed-font-size" => 8,
+            "min-zoomed-font-size" => MIN_ZOOMED_FONT_SIZE,
             "text-halign" => "center",
             "text-valign" => "center",
             "background-color" => "data(colour)",
@@ -261,7 +262,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "shape" => "ellipse",
             "width" => SPECIES_SIZE,
             "height" => SPECIES_SIZE,
-            "font-size" => 2.4,
+            "font-size" => 3.5,
             "text-valign" => "bottom",
             "text-margin-y" => 1,
             "color" => "#18181b"
@@ -286,7 +287,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "shape" => "ellipse",
             "width" => 12,
             "height" => 9,
-            "font-size" => 2.0,
+            "font-size" => 3,
             "text-margin-y" => -2,
             "background-opacity" => 0.0,
             "color" => "#18181b",
@@ -297,7 +298,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         (; selector="""node.reaction[view = "gene"]""", style=Dict(
             "width" => 36,
             "height" => 27,
-            "font-size" => 16,
+            "font-size" => 12,
             "text-margin-y" => -10
         )),
         (; selector="node.dimmed", style=Dict(
@@ -318,8 +319,8 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "curve-style" => "bezier",
             "target-arrow-shape" => "triangle",
             "font-family" => fontfamily,
-            "font-size" => 7,
-            "min-zoomed-font-size" => 8,
+            "font-size" => 9,
+            "min-zoomed-font-size" => MIN_ZOOMED_FONT_SIZE,
             "text-rotation" => "autorotate",
             "text-margin-y" => -8,
             "color" => "#18181b",
@@ -358,7 +359,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         )),
         (; selector="edge.substrate, edge.product", style=Dict(
             "width" => 0.5,
-            "font-size" => 1.3,
+            "font-size" => 2,
             "arrow-scale" => 0.2,
             "curve-style" => "unbundled-bezier",
             "control-point-step-size" => 4,
@@ -374,7 +375,7 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
         (; selector="edge.promotes, edge.inhibits", style=Dict(
             "width" => "mapData(strengthNorm, 0, 1, 0.75, 2.5)",
             "opacity" => 0.35,
-            "font-size" => 1.5,
+            "font-size" => 3,
             "arrow-scale" => 0.4,
             "text-margin-y" => -1,
             "text-background-opacity" => 0.7,
@@ -789,9 +790,10 @@ function inline_parameters()
 
             for (const { node, container } of anchors.values()) {
                 const geneView = node.data("view") === "gene";
-                const fontSize = geneView ? 12 : 1.8
+                const fontSize = geneView ? 9 : 3
                 const offset = geneView ? 10 : 2/3;
-                if (node.removed() || !node.visible() || node.hasClass("unmatched")) {
+                if (node.removed() || !node.visible() || node.hasClass("unmatched") ||
+                    fontSize * 2 ** Math.ceil(Math.log2(cy.zoom() * cy.renderer().getPixelRatio())) < $(MIN_ZOOMED_FONT_SIZE)) {
                     container.style.display = "none";
                     continue;
                 }

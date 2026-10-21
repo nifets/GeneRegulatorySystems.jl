@@ -193,25 +193,32 @@ function provenance(schedule!::Models.Scheduling.Schedule)
     lines
 end
 
-gene_of(species::Symbol, groups) = gene_of(species, Set(groups))
-
-function gene_of(species::Symbol, groups::AbstractSet)
+function split_species(species::Symbol, groups::AbstractSet)
     name = String(species)
     position = findfirst('.', name)
     while !isnothing(position)
-        candidate = Symbol(name[1:prevind(name, position)])
-        candidate in groups && return candidate
+        gene = Symbol(name[1:prevind(name, position)])
+        gene in groups && return (; gene, species = name[nextind(name, position):end])
         position = findnext('.', name, nextind(name, position))
     end
     nothing
 end
 
+gene_of(species::Symbol, groups) = gene_of(species, Set(groups))
+gene_of(species::Symbol, groups::AbstractSet) =
+    something(split_species(species, groups), (; gene = nothing)).gene
+
+species_of(species::Symbol, groups) = species_of(species, Set(groups))
+species_of(species::Symbol, groups::AbstractSet) =
+    something(split_species(species, groups), (; species = String(species))).species
+
 function infer_parents(network::Network)
+    genes = Set(network.genes)
     parents = Dict{Symbol, Symbol}()
     for node in network.nodes
         node.kind === :species || continue
         parent = isnothing(node.parent) ?
-            gene_of(node.name, network.genes) : node.parent
+            gene_of(node.name, genes) : node.parent
         isnothing(parent) || (parents[node.name] = parent)
     end
 
@@ -242,7 +249,10 @@ function infer_parents(network::Network)
         else
             node.parent
         end
-        Node(node.name, node.kind, parent, node.properties, node.present_in)
+        properties = node.kind === :species ?
+            merge(node.properties, Dict{Symbol, Any}(:name => species_of(node.name, genes))) :
+            node.properties
+        Node(node.name, node.kind, parent, properties, node.present_in)
     end
 
     Network(
@@ -430,6 +440,7 @@ end
 node_label(node::Node) = node_label(Val(node.kind), node)
 node_label(::Val, node) = string(node.name)
 node_label(::Val{:reaction}, node) = string(node.properties[:name])
+node_label(::Val{:species}, node) = get(node.properties, :name, string(node.name))
 
 link_label(link::Link) = link_label(Val(link.kind), link)
 link_label(::Val, link) = properties_label(link.properties)
