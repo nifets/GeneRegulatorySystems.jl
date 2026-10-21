@@ -30,3 +30,6 @@ CytoscapeJSExt = "CytoscapeJS"
 Catalyst = "16"
 JumpProcesses = "9.32"
 julia = "1.11"
+
+[sources]
+JumpProcesses = {url = "https://github.com/nifets/JumpProcesses.jl", rev = "cb8b9a0914eb319c91d74ceb9d6d02a9d01632c7"}
