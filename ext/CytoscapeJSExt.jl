@@ -277,6 +277,11 @@ function stylesheet(network, group_colors; fontfamily="Montserrat")
             "text-valign" => "bottom",
             "text-margin-y" => 1
         )),
+        (; selector="""node.orphan-species[view = "species"]""", style=Dict(
+            "width" => 3SPECIES_SIZE,
+            "height" => 3SPECIES_SIZE,
+            "font-size" => 8,
+        )),
         (; selector="node.reaction", style=Dict(
             "shape" => "ellipse",
             "width" => 12,
@@ -655,6 +660,7 @@ cy => {
                     if (position) added.position(position);
                 }
             }
+            cy.nodes(".reaction, .orphan-species").data("view", "species");
             cy.nodes(".gene").addClass("compound-parent");
         })
         layoutDetail(genePositions);
@@ -672,6 +678,7 @@ cy => {
             cy.remove(cy.nodes(":child"));
             cy.remove(cy.edges());
             cy.add(geneEdges());
+            cy.nodes(".reaction, .orphan-species").data("view", "gene");
             cy.nodes(".gene").removeClass("compound-parent");
         })
     }
@@ -928,7 +935,7 @@ const DEFAULT_PHYSICS = (;
     handleDisconnected=false,
 )
 
-const DEFAULT_EDGE_LENGTHS = (; gene=400, strong=200, reaction=200, species=20)
+const DEFAULT_EDGE_LENGTHS = (; gene=400, strong=200, reaction=200, orphan=60, species=20)
 
 function continuous_physics(physics, edge_lengths, simplified)
     JS.js"""
@@ -955,12 +962,8 @@ function continuous_physics(physics, edge_lengths, simplified)
             const target = edge.target();
             const reaction = source.hasClass("reaction") ? source :
                 target.hasClass("reaction") ? target : null;
-            if (
-                reaction &&
-                !reaction.isChild() &&
-                edge.data("view") === "gene"
-            ) {
-                return lengths.reaction;
+            if (reaction && !reaction.isChild()) {
+                return edge.data("view") === "gene" ? lengths.reaction : lengths.orphan;
             }
             if (source.isChild() || target.isChild()) {
                 return lengths.species;
