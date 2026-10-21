@@ -14,36 +14,44 @@ function snapshots(trace::Trace{<:AbstractVector}, genes, track; resolution=200)
     values = Float64[]
     column = Vector{Float64}(undef, length(dimensions))
     states = @NamedTuple{catenation::Int, t::Float64}[]
-    branches = Dict{Int, String}()
+    descriptions = String[]
     lineages = Dict{Int, String}()
     colors = Dict{Int, String}()
+    sampled = Dict{Int, Bool}()
 
     for (id, catenation) in enumerate(catenations)
         from = records[first(catenation.segments)].from
         to = records[last(catenation.segments)].to
-        from < to || continue
-        branches[id] = describe(records, catenation)
+        snapshot = all(i -> records[i].from == records[i].to, catenation.segments)
+        snapshot || from < to || continue
+        describe_at = describer(records, catenation)
         lineages[id] = lineage(records, catenation)
         colors[id] = catenation_color(records, catenation)
+        sampled[id] = snapshot
 
-        for t in range(from, to; length=resolution)
+        times = snapshot ?
+            unique(records[i].from for i in catenation.segments) :
+            range(from, to; length=resolution)
+        for t in times
             map!(dimension -> sample(catenation, dimension, t), column, dimensions)
             all(isfinite, column) || continue
             append!(values, column)
             push!(states, (; catenation=id, t))
+            push!(descriptions, describe_at(t))
         end
     end
 
     X = reshape(values, length(dimensions), :)
-    (; X, states, branches, lineages, colors, dimensions)
+    (; X, states, descriptions, lineages, colors, sampled, dimensions)
 end
 
 struct Projection
     coords::Matrix{Float64}
     states::Vector{@NamedTuple{catenation::Int, t::Float64}}
     colors::Vector{RGBf}
-    branches::Dict{Int, String}
+    descriptions::Vector{String}
     lineages::Dict{Int, String}
+    sampled::Dict{Int, Bool}
     method::Symbol
     labels::Vector{String}
 end
@@ -129,8 +137,9 @@ Projection(::Nothing, components) = Projection(
     zeros(Float64, max(components, 2), 0),
     @NamedTuple{catenation::Int, t::Float64}[],
     RGBf[],
+    String[],
     Dict{Int, String}(),
-    Dict{Int, String}(),
+    Dict{Int, Bool}(),
     Symbol(""),
     String[],
 )
@@ -168,8 +177,9 @@ function project(
         coords,
         snapshot.states,
         colors,
-        snapshot.branches,
+        snapshot.descriptions,
         snapshot.lineages,
+        snapshot.sampled,
         unval(chosen),
         labels(chosen, snapshot.dimensions, size(coords, 1)),
     )
@@ -197,9 +207,10 @@ end
 related(a, b) =
     Scheduling.ispathprefix(a, b) || Scheduling.ispathprefix(b, a)
 
-function polyline(projection::Projection, n; budget)
+function polyline(projection::Projection, n; budget, sampled)
     grouped = Dict{Int, Vector{Int}}()
     for (i, state) in enumerate(projection.states)
+        get(projection.sampled, state.catenation, false) == sampled || continue
         push!(get!(Vector{Int}, grouped, state.catenation), i)
     end
     stride = max(1, cld(length(projection.states), budget))
@@ -235,7 +246,7 @@ function polyline(projection::Projection, n; budget)
     (; points, colors, sources, spans, blank)
 end
 
-function render(projection::Projection; emphasis=3, dimming=0.4, budget=20_000)
+function render(projection::Projection; emphasis=3, dimming=0.4, budget=20_000, connect_samples=false)
     n = min(size(projection.coords, 1), 3)
     figure = Figure()
     axis = phase_axis(figure, projection, max(n, 2))
@@ -251,14 +262,26 @@ function render(projection::Projection; emphasis=3, dimming=0.4, budget=20_000)
 
     n >= 2 && !isempty(projection.states) || return figure
 
-    (; points, colors, sources, spans, blank) = polyline(projection, n; budget)
+    continuous = polyline(projection, n; budget, sampled=false)
+    discrete = polyline(projection, n; budget, sampled=true)
+    blank = continuous.blank
 
-    line = lines!(
+    pickable = IdDict{Any, Any}()
+    pickable[lines!(axis, continuous.points; color=continuous.colors, alpha=dimming)] = continuous
+    connect_samples && (pickable[lines!(
         axis,
-        points;
-        color=colors,
+        discrete.points;
+        color=discrete.colors,
         alpha=dimming,
-    )
+        linewidth=0.75,
+    )] = discrete)
+    pickable[scatter!(
+        axis,
+        discrete.points;
+        color=discrete.colors,
+        alpha=dimming,
+        markersize=3,
+    )] = discrete
 
     highlight_points = Observable(typeof(blank)[])
     highlight_colors = Observable(RGBf[])
@@ -289,14 +312,15 @@ function render(projection::Projection; emphasis=3, dimming=0.4, budget=20_000)
 
     on(events(axis.scene).mouseposition) do _
         picked, i = pick(axis.scene)
-        hit = picked === line &&
-            checkbounds(Bool, points, i) && !iszero(sources[i])
-        state = hit ? projection.states[sources[i]] : nothing
+        source = get(pickable, picked, nothing)
+        hit = !isnothing(source) &&
+            checkbounds(Bool, source.points, i) && !iszero(source.sources[i])
+        state = hit ? projection.states[source.sources[i]] : nothing
 
         if hit
             tip_position[] = Point2f(events(axis.scene).mouseposition[])
             tip_text[] = join([
-                "branch: $(get(projection.branches, state.catenation, ""))",
+                "branch: $(projection.descriptions[source.sources[i]])",
                 "time: $(round(state.t; digits=2))",
             ], "\n")
         end
@@ -310,14 +334,14 @@ function render(projection::Projection; emphasis=3, dimming=0.4, budget=20_000)
         shades = RGBf[]
 
         if !isnothing(current)
-            for (key, range) in spans
+            for polyline in (continuous, discrete), (key, range) in polyline.spans
                 related(current, key) || continue
                 if !isempty(highlight)
                     push!(highlight, blank)
                     push!(shades, RGBf(0, 0, 0))
                 end
-                append!(highlight, @view points[range])
-                append!(shades, @view colors[range])
+                append!(highlight, @view polyline.points[range])
+                append!(shades, @view polyline.colors[range])
             end
         end
 

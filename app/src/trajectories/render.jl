@@ -102,12 +102,14 @@ function branches_by_dimension(::Type{T}, catenations; records, selected_genes, 
             from::Float64,
             to::Float64,
             weight::Float64,
+            sampled::Bool,
         }},
     }()
 
     for catenation in values(catenations)
         detail_from = rows[first(catenation.segments)].from
         detail_to = rows[last(catenation.segments)].to
+        sampled = all(i -> rows[i].from == rows[i].to, catenation.segments)
 
         for (dimension, detail) in catenation.trajectories
             detail isa T || continue
@@ -119,6 +121,7 @@ function branches_by_dimension(::Type{T}, catenations; records, selected_genes, 
                     from=Float64(detail_from),
                     to=Float64(detail_to),
                     weight=1.0,
+                    sampled,
                 ),
             )
         end
@@ -178,15 +181,24 @@ function aggregate(::Type{CountSeries}, grouped; from, to, width)
         for t in ts
             count = 0
             live = 0.0
+            right = t + step / 2
 
             for (position, (branch, series)) in enumerate(windows)
-                branch.from <= t <= branch.to || continue
                 cursor = cursors[position]
-                while cursor < length(series.ts) && series.ts[cursor + 1] <= t
-                    cursor += 1
+                if branch.sampled
+                    while cursor < length(series.ts) && series.ts[cursor + 1] < right
+                        cursor += 1
+                    end
+                    cursors[position] = cursor
+                    right - step <= series.ts[cursor] < right || continue
+                else
+                    branch.from <= t <= branch.to || continue
+                    while cursor < length(series.ts) && series.ts[cursor + 1] <= t
+                        cursor += 1
+                    end
+                    cursors[position] = cursor
+                    series.ts[cursor] <= t || continue
                 end
-                cursors[position] = cursor
-                series.ts[cursor] <= t || continue
                 count += 1
                 live += branch.weight
                 samples[count] = series.ys[cursor]
@@ -205,7 +217,15 @@ function aggregate(::Type{CountSeries}, grouped; from, to, width)
             end
         end
 
-        result[dimension] = (; ts, median, q25, q75, nlive)
+        keep = all(branch -> branch.sampled, branches) ?
+            findall(!isnan, median) : eachindex(ts)
+        result[dimension] = (;
+            ts=ts[keep],
+            median=median[keep],
+            q25=q25[keep],
+            q75=q75[keep],
+            nlive=nlive[keep],
+        )
     end
 
     result
@@ -326,7 +346,7 @@ function render!(
                     "gene: $gene",
                     "activity: $(round(value; digits=2))",
                     "branches: $(data.nlive[column])",
-                    "time: $(round(data.ts[column]; digits=2))–$(round(data.ts[column + 1]; digits=2))",
+                    "time: $(round((data.ts[column] + data.ts[column + 1]) / 2; digits=2))",
                 ], "\n")
             end
         end
@@ -369,28 +389,29 @@ function render!(
     window,
     max_branches,
     dimming,
+    connect_samples=false,
 )
-    strands = Dict{String, Vector{NamedTuple}}()
+    strands = Dict{Tuple{String, Bool}, Vector{NamedTuple}}()
 
     for catenation in values(catenations)
-        label = describe(records, catenation)
+        describe_at = describer(records, catenation)
         from = records[first(catenation.segments)].from
         to = records[last(catenation.segments)].to
+        sampled = all(i -> records[i].from == records[i].to, catenation.segments)
 
         for (dimension, detail) in catenation.trajectories
             detail isa CountPyramid || continue
             dimension.group in selected_genes || continue
             push!(
-                get!(Vector{NamedTuple}, strands, dimension.group),
-                (; detail, from, to, label),
+                get!(Vector{NamedTuple}, strands, (dimension.group, sampled)),
+                (; detail, from, to, describe_at),
             )
         end
     end
 
     buffers = Ref[]
-    targets = IdDict{Any, Tuple{String, Ref}}()
 
-    for (gene, entries) in strands
+    for ((gene, sampled), entries) in strands
         data = map(window) do view
             points = Point2f[]
             owners = String[]
@@ -406,13 +427,13 @@ function render!(
                 end
                 for (t, y) in zip(series.ts, series.ys)
                     push!(points, Point2f(t, y))
-                    push!(owners, entry.label)
+                    push!(owners, entry.describe_at(t))
                 end
 
                 display_to = min(entry.to, view.to)
-                if last(series.ts) < display_to
+                if !sampled && last(series.ts) < display_to
                     push!(points, Point2f(display_to, last(series.ys)))
-                    push!(owners, entry.label)
+                    push!(owners, entry.describe_at(display_to))
                 end
             end
 
@@ -422,63 +443,49 @@ function render!(
         current = Ref(data[])
         push!(buffers, current)
 
+        inspector_label = (_, i, _) -> begin
+            buffer = current[]
+            checkbounds(Bool, buffer.points, i) && !isempty(buffer.owners[i]) || return ""
+            point = buffer.points[i]
+            join([
+                "gene: $gene",
+                "path: $(buffer.owners[i])",
+                "time: $(round(point[1]; digits=2))",
+                "value: $(round(point[2]; digits=2))",
+            ], "\n")
+        end
         color = get(group_colors, gene, :gray)
-        plot = lines!(
-            axis,
-            current[].points;
-            color,
-            alpha=dimming,
-            inspectable=false,
-        )
-        targets[plot] = (gene, current)
+        plot = sampled && !connect_samples ?
+            scatter!(
+                axis,
+                current[].points;
+                color,
+                alpha=dimming,
+                markersize=3,
+                inspector_label,
+            ) :
+            sampled ?
+            scatterlines!(
+                axis,
+                current[].points;
+                color,
+                alpha=dimming,
+                linewidth=0.75,
+                markersize=3,
+                inspector_label,
+            ) :
+            lines!(
+                axis,
+                current[].points;
+                color,
+                alpha=dimming,
+                inspector_label,
+            )
 
         on(data) do updated
             current[] = updated
             update!(plot; arg1=updated.points)
         end
-    end
-
-    overlay = Scene(axis.scene; clear=false)
-    campixel!(overlay)
-    tip_position = Observable(Point2f(0, 0))
-    tip_text = Observable("")
-    tip_visible = Observable(false)
-    tooltip!(
-        overlay,
-        tip_position,
-        tip_text;
-        visible=tip_visible,
-        fontsize=12,
-        overdraw=true,
-        depth_shift=-0.1f0,
-        inspectable=false,
-    )
-    shown = Ref((nothing, 0))
-
-    on(events(axis.scene).mouseposition) do _
-        picked, i = pick(axis.scene)
-        target = get(targets, picked, nothing)
-        buffer = isnothing(target) ? nothing : last(target)[]
-        hit = !isnothing(buffer) && checkbounds(Bool, buffer.points, i) &&
-            !isempty(buffer.owners[i])
-
-        if !hit
-            tip_visible[] && (tip_visible[] = false)
-            shown[] = (nothing, 0)
-            return
-        end
-
-        shown[] == (picked, i) && return
-        shown[] = (picked, i)
-        point = buffer.points[i]
-        tip_position[] = Point2f(events(axis.scene).mouseposition[])
-        tip_text[] = join([
-            "gene: $(first(target))",
-            "path: $(buffer.owners[i])",
-            "time: $(round(point[1]; digits=2))",
-            "value: $(round(point[2]; digits=2))",
-        ], "\n")
-        tip_visible[] || (tip_visible[] = true)
     end
 
     update_y = function (_...)
@@ -509,6 +516,7 @@ function render!(
     window,
     max_branches,
     dimming,
+    connect_samples=false,
 )
     grouped = branches_by_dimension(
         CountPyramid,
@@ -548,6 +556,7 @@ function render!(
                 "median: $(round(data[].median[i]; digits=2))",
                 "q25–q75: $(round(data[].q25[i]; digits=2))–$(round(data[].q75[i]; digits=2))",
                 "branches: $(data[].nlive[i])",
+                "time: $(round(data[].ts[i]; digits=2))",
             ], "\n"),
         )
         on(rows) do all_rows
@@ -602,6 +611,8 @@ function render(
     gene_limit=10,
     max_branches=400,
     dimming=0.7,
+    connect_samples=false,
+    instants=(),
 )
     aggregate_mode = Symbol(aggregate_mode)
     aggregate_mode in (:raw, :aggregate) || throw(
@@ -615,6 +626,8 @@ function render(
     figure = Figure(size=(1200, 180 * max(1, length(tracks))))
     axes = Axis[]
     from, to = extent(trajectories)
+    margin = 0.005 * (to - from)
+    from, to = from - margin, to + margin
 
     for (row, kind) in enumerate(tracks)
         type = seriestype(kind)
@@ -655,6 +668,7 @@ function render(
                 window,
                 max_branches,
                 dimming,
+                connect_samples,
             )
         else
             render!(
@@ -668,6 +682,18 @@ function render(
                 max_branches,
             )
         end
+    end
+
+    for axis in axes, mark in instants
+        text = join(["time: $(round(mark.t; digits=2))"; mark.entries], "\n")
+        vlines!(
+            axis,
+            [mark.t];
+            color=(:gray, 0.6),
+            linestyle=:dash,
+            linewidth=1,
+            inspector_label=(_, _, _) -> text,
+        )
     end
 
     length(axes) > 1 && linkxaxes!(axes...)

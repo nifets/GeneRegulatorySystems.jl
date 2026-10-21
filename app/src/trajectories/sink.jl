@@ -20,6 +20,9 @@ function (sink::Sink)(
         sink.i += 1
         to = Models.t(state)
         model = primitive!.path
+        f! = Models.unwrap(primitive!.f!)
+        instant = f! isa Models.Instant
+        description = instant ? Models.describe(f!) : nothing
         bindings = primitive!.bindings
         label = get(bindings, :label, "")
         color = get(bindings, :color, get(bindings, :colour, ""))
@@ -45,7 +48,9 @@ function (sink::Sink)(
                 label=string(label),
                 color=string(color),
                 count,
-                into=isnothing(into) ? "" : String(into),
+                into=isnothing(into) ? nothing : String(into),
+                instant,
+                description=description isa Models.Label ? description.label : "",
                 trajectories,
             ))
     end
@@ -78,6 +83,13 @@ function describe(records, catenation::Catenation)
     describe(lineage(records, catenation), label)
 end
 
+function describer(records, catenation::Catenation)
+    starts = [records[i].from for i in catenation.segments]
+    t -> let record = records[catenation.segments[max(1, searchsortedlast(starts, t))]]
+        describe(branch(record.path), record.label)
+    end
+end
+
 function assemble(records, catenation::Catenation)
     length(catenation.segments) == 1 && return Catenation(
         catenation.segments,
@@ -95,9 +107,26 @@ function assemble(records, catenation::Catenation)
     Catenation(catenation.segments, trajectories)
 end
 
-function catenate(sink::Sink; path="")
+channels(sink::Sink) = sort!(unique(
+    segment.into for segment in sink.records if segment.count > 0 && !isnothing(segment.into)
+))
+
+function instants(sink::Sink; path="", channel=nothing)
+    marks = Dict{Float64, Vector{String}}()
+    for segment in sink.records
+        segment.instant || continue
+        isnothing(channel) || segment.into == channel || continue
+        Scheduling.ispathprefix(branch(segment.path), path) || continue
+        entry = isempty(segment.label) ? segment.description : "$(segment.description) ($(segment.label))"
+        push!(get!(Vector{String}, marks, segment.from), entry)
+    end
+    sort!([(; t, entries) for (t, entries) in marks]; by = mark -> mark.t)
+end
+
+function catenate(sink::Sink; path="", channel=nothing)
     records = filter(sink.records) do segment
-        Scheduling.ispathprefix(path, segment.path)
+        Scheduling.ispathprefix(path, segment.path) &&
+            (isnothing(channel) || segment.into == channel)
     end
     Trace(records, [assemble(records, catenation) for catenation in cut(records)])
 end

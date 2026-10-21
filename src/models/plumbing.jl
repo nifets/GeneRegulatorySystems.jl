@@ -31,6 +31,8 @@ Specifications.constructor(::Val{:pass}) = Pass
 
 (::Pass)(x, _Δt::Float64; _...) = x
 
+Models.describe(::Pass) = Models.Label("{pass}")
+
 """
     Wait <: Model{FlatState}
 
@@ -80,6 +82,8 @@ struct Filter <: Instant{FlatState}
     kinds::Regex
 end
 Filter(s::AbstractString) = Filter(Regex(s))
+
+Models.describe(f!::Filter) = Models.Label("{filter} $(f!.kinds.pattern)")
 
 Specifications.constructor(::Val{:filter}) = Filter
 
@@ -157,6 +161,17 @@ adder(counts::AbstractDict{Symbol}) = Adjust(+, flatten(counts, T = Int))
 multiplier(counts::AbstractDict{Symbol}) = Adjust(*, flatten(counts, T = Real))
 setter(counts::AbstractDict{Symbol}) =
     Adjust(last ∘ Pair, flatten(counts, T = Int))
+
+specification_key(::typeof(+)) = :add
+specification_key(::typeof(*)) = :multiply
+specification_key(::typeof(last ∘ Pair)) = :set
+
+Models.describe(f!::Adjust) = Models.Label(
+    "{$(specification_key(f!.adjust))} " * join(
+        ("$species = $value" for (species, value) in sort!(collect(f!.adjustment); by = first)),
+        ", ",
+    ),
+)
 
 Specifications.constructor(::Val{:set}) = setter
 Specifications.constructor(::Val{:add}) = adder
