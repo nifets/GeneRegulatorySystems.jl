@@ -1148,8 +1148,10 @@ themed_view(content) = Bonito.App() do
         media.addEventListener("change", event => $(dark).notify(event.matches))
     """
     view = map(dark) do is_dark
-        isnothing(is_dark) ? DOM.div() :
-            with_theme(content, is_dark ? theme_dark() : Theme())
+        isnothing(is_dark) ? DOM.div() : DOM.div(
+            with_theme(content, is_dark ? theme_dark() : Theme());
+            style = "width: 100%; height: 100%;",
+        )
     end
     DOM.div(view, probe; style = "width: 100%; height: 100%;")
 end
