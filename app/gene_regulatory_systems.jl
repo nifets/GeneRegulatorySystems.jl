@@ -97,28 +97,6 @@ md"""
 ## Styling
 """
 
-# ╔═╡ 4a29ccba-5cdc-47e1-953c-5eee6d1edbe7
-dark_mode_probe = @bind dark_mode @htl("""
-<span>
-<script>
-    const root = currentScript.parentElement
-    const media = window.matchMedia("(prefers-color-scheme: dark)")
-
-    const update = () => {
-        root.value = media.matches
-        root.dispatchEvent(new CustomEvent("input"))
-    }
-
-    media.addEventListener("change", update)
-    update()
-
-    invalidation.then(() =>
-        media.removeEventListener("change", update)
-    )
-</script>
-</span>
-""")
-
 # ╔═╡ 6a3d1f28-04bc-4e7a-9c15-8b2f70d6ae41
 hide_notebook_styles = @htl("""
 <style id="grs-hide-notebook">
@@ -360,6 +338,21 @@ dashboard_styles = @htl("""
 </style>
 """)
 
+
+# ╔═╡ fca91735-9e3a-4f6d-a6a0-9d3dd0f3d9be
+montserrat_face = let
+    font = read(joinpath(@__DIR__, "assets", "fonts", "Montserrat-latin.woff2"))
+    HTML("""
+    <style id="grs-montserrat">
+    @font-face {
+        font-family: Montserrat;
+        src: url("data:font/woff2;base64,$(Base64.base64encode(font))") format("woff2");
+        font-weight: 100 900;
+        font-display: swap;
+    }
+    </style>
+    """)
+end
 
 # ╔═╡ b3f27a51-6c84-4d19-9f52-8e1c47a0d6b2
 reload_control = @bind reload_count @htl("""
@@ -936,85 +929,11 @@ levels = Trajectories.lod(trace)
 # ╔═╡ 9c4e17ab-2f60-4d83-b915-6e0a7d3c81f4
 trajectories = Trajectories.select(levels, selected_path)
 
-# ╔═╡ 68f213e4-a64b-4aa1-bf77-9b131e657193
-trajectory_view = if run_simulation && !ismissing(dark_mode)
-    Bonito.App() do
-        with_theme(dark_mode ? theme_dark() : Theme()) do
-            DOM.div(
-                WGLMakie.WithConfig(
-                    Trajectories.render(
-                        trajectories;
-                        tracks=selected_tracks,
-                        selected_genes=visible_genes,
-                        group_colors,
-                        aggregate_mode,
-                        connect_samples,
-                        instants=instant_marks,
-                    );
-                    resize_to = (:parent, nothing),
-                );
-                style = "width: 100%; height: 100%;",
-            )
-        end
-    end
-end;
-
 # ╔═╡ 2f83b1d6-9c07-4e58-a3f1-64d0b8ea7c19
 analysis_control = @bind analysis PlutoUI.Select(
     ["none" => "none", "phase" => "phase", "distribution" => "distribution"];
     default="phase",
 );
-
-# ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
-trajectory_header = isnothing(trajectory_view) ? nothing : @htl("""
-<div class="dashboard-header stacked">
-    <div style="display: flex; flex-direction: column; gap: 0.4rem;">
-        <label class="dashboard-option">
-            <span>channel:</span>
-            $(trajectory_channel_control)
-        </label>
-        <label class="dashboard-option">
-            <span>path:</span>
-            $(trajectory_path_control)
-        </label>
-
-        <label class="dashboard-option">
-            <span>display:</span>
-            $(trajectory_display_control)
-        </label>
-
-        <label class="dashboard-option">
-            <span>analysis:</span>
-            $(analysis_control)
-        </label>
-    </div>
-    <label class="dashboard-option stacked">
-        <span>genes:</span>
-        $(trajectory_genes_control)
-    </label>
-    <label class="dashboard-option stacked">
-        <span>tracks:</span>
-        $(trajectory_tracks_control)
-    </label>
-    <div style="margin-left: auto; align-self: flex-start; display: flex; flex-direction: column; gap: 0.4rem;">
-        <label class="dashboard-option">
-            <span>connect samples:</span>
-            $(connect_samples_control)
-        </label>
-        <label class="dashboard-option">
-            <span>instants:</span>
-            $(instants_control)
-        </label>
-    </div>
-</div>
-""");
-
-# ╔═╡ 5e913274-b08c-4366-b7ba-4c28e63b953a
-dashboard_area(
-    "trajectory",
-    trajectory_header,
-    dashboard_panel(trajectory_view; height=180 * max(1, length(selected_tracks))),
-)
 
 # ╔═╡ 4a1c8e77-2d95-4f3a-b0e6-1c7d9f2a4b58
 analysis_track_control = @bind analysis_track PlutoUI.Select(
@@ -1039,26 +958,6 @@ distribution_reference =
             visible_genes,
             analysis_track,
         )
-    end
-
-# ╔═╡ 9b1c47e3-5a82-4f07-b3e6-08d27f4a5169
-distribution_view =
-    if !isnothing(distribution_samples) && !ismissing(dark_mode)
-        Bonito.App() do
-            with_theme(dark_mode ? theme_dark() : Theme()) do
-                figure = isnothing(distribution_reference) ?
-                    Trajectories.render(distribution_samples; group_colors) :
-                    Trajectories.render(
-                        distribution_samples,
-                        distribution_reference;
-                        group_colors,
-                    )
-                DOM.div(
-                    WGLMakie.WithConfig(figure; resize_to = (:parent, nothing));
-                    style = "width: 100%; height: 100%;",
-                )
-            end
-        end
     end
 
 # ╔═╡ 2e79f5a8-b013-4c96-85d2-7a1fc6039e48
@@ -1135,31 +1034,6 @@ phase_header = !(run_simulation && analysis == "phase") ? nothing : @htl("""
     """))
 </div>
 """);
-
-# ╔═╡ b8a9bd86-5abc-48ed-87f5-534fe604bfb3
-phase_view = if !isnothing(phase_projection) && !ismissing(dark_mode)
-    Bonito.App() do
-        with_theme(dark_mode ? theme_dark() : Theme()) do
-            DOM.div(
-                WGLMakie.WithConfig(
-                    Trajectories.render(phase_projection; connect_samples);
-                    resize_to = (:parent, nothing),
-                );
-                style = "width: 100%; height: 100%;",
-            )
-        end
-    end
-end
-
-# ╔═╡ 3c7f1052-9e6a-4144-b5f8-2a06c419731e
-dashboard_area(
-    "left",
-    schedule_panel,
-    phase_header,
-    dashboard_panel(phase_view; height=450),
-    distribution_header,
-    dashboard_panel(distribution_view; height=450),
-)
 
 # ╔═╡ a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
 begin
@@ -1265,6 +1139,125 @@ end;
 # ╔═╡ 2b6e0f41-8d59-4033-a4e7-19f5b308620d
 dashboard_area("header", app_header)
 
+# ╔═╡ b17ffd5a-f47d-4865-9d3e-7914441c2a38
+themed_view(content) = Bonito.App() do
+    dark = Observable{Union{Nothing,Bool}}(nothing)
+    probe = js"""
+        const media = window.matchMedia("(prefers-color-scheme: dark)")
+        $(dark).notify(media.matches)
+        media.addEventListener("change", event => $(dark).notify(event.matches))
+    """
+    view = map(dark) do is_dark
+        isnothing(is_dark) ? DOM.div() :
+            with_theme(content, is_dark ? theme_dark() : Theme())
+    end
+    DOM.div(view, probe; style = "width: 100%; height: 100%;")
+end
+
+# ╔═╡ 9b1c47e3-5a82-4f07-b3e6-08d27f4a5169
+distribution_view =
+    if !isnothing(distribution_samples)
+        themed_view() do
+            figure = isnothing(distribution_reference) ?
+                Trajectories.render(distribution_samples; group_colors) :
+                Trajectories.render(
+                    distribution_samples,
+                    distribution_reference;
+                    group_colors,
+                )
+            WGLMakie.WithConfig(figure; resize_to = (:parent, nothing))
+        end
+    end
+
+# ╔═╡ 68f213e4-a64b-4aa1-bf77-9b131e657193
+trajectory_view = if run_simulation
+    themed_view() do
+        WGLMakie.WithConfig(
+            Trajectories.render(
+                trajectories;
+                tracks=selected_tracks,
+                selected_genes=visible_genes,
+                group_colors,
+                aggregate_mode,
+                connect_samples,
+                instants=instant_marks,
+            );
+            resize_to = (:parent, nothing),
+        )
+    end
+end;
+
+# ╔═╡ b81a8c99-9653-4288-846a-f56c873698cc
+trajectory_header = isnothing(trajectory_view) ? nothing : @htl("""
+<div class="dashboard-header stacked">
+    <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+        <label class="dashboard-option">
+            <span>channel:</span>
+            $(trajectory_channel_control)
+        </label>
+        <label class="dashboard-option">
+            <span>path:</span>
+            $(trajectory_path_control)
+        </label>
+
+        <label class="dashboard-option">
+            <span>display:</span>
+            $(trajectory_display_control)
+        </label>
+
+        <label class="dashboard-option">
+            <span>analysis:</span>
+            $(analysis_control)
+        </label>
+    </div>
+    <label class="dashboard-option stacked">
+        <span>genes:</span>
+        $(trajectory_genes_control)
+    </label>
+    <label class="dashboard-option stacked">
+        <span>tracks:</span>
+        $(trajectory_tracks_control)
+    </label>
+    <div style="margin-left: auto; align-self: flex-start; display: flex; flex-direction: column; gap: 0.4rem;">
+        <label class="dashboard-option">
+            <span>connect samples:</span>
+            $(connect_samples_control)
+        </label>
+        <label class="dashboard-option">
+            <span>instants:</span>
+            $(instants_control)
+        </label>
+    </div>
+</div>
+""");
+
+# ╔═╡ 5e913274-b08c-4366-b7ba-4c28e63b953a
+dashboard_area(
+    "trajectory",
+    trajectory_header,
+    dashboard_panel(trajectory_view; height=180 * max(1, length(selected_tracks))),
+)
+
+# ╔═╡ b8a9bd86-5abc-48ed-87f5-534fe604bfb3
+phase_view = if !isnothing(phase_projection)
+    themed_view() do
+        WGLMakie.WithConfig(
+            Trajectories.render(phase_projection; connect_samples);
+            resize_to = (:parent, nothing),
+        )
+    end
+end
+
+# ╔═╡ 3c7f1052-9e6a-4144-b5f8-2a06c419731e
+dashboard_area(
+    "left",
+    schedule_panel,
+    phase_header,
+    dashboard_panel(phase_view; height=450),
+    distribution_header,
+    dashboard_panel(distribution_view; height=450),
+)
+
 # ╔═╡ Cell order:
 # ╟─29eb1509-3cea-4c50-9d8e-24bcd8a54bbb
 # ╠═032084a8-991a-4eeb-a5e9-78110b2b7cbe
@@ -1343,9 +1336,10 @@ dashboard_area("header", app_header)
 # ╠═b8a9bd86-5abc-48ed-87f5-534fe604bfb3
 # ╠═7f2b6c14-8a03-4d51-9e27-3b5c0a8f61d9
 # ╟─35e4e15a-e1f7-42c1-8ded-5714234811c6
-# ╠═4a29ccba-5cdc-47e1-953c-5eee6d1edbe7
 # ╠═6a3d1f28-04bc-4e7a-9c15-8b2f70d6ae41
 # ╠═a4bcea34-2ee9-48ee-bf1a-6d1fd6256c91
 # ╠═375349c2-33bb-45fb-b412-672c678b93b3
+# ╠═b17ffd5a-f47d-4865-9d3e-7914441c2a38
+# ╠═fca91735-9e3a-4f6d-a6a0-9d3dd0f3d9be
 # ╠═b3f27a51-6c84-4d19-9f52-8e1c47a0d6b2
 # ╠═0187c445-f7a0-4eae-b55d-2bd955df2c2c

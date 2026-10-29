@@ -20,11 +20,12 @@ UMAP = "c4f8c510-2410-5be4-91d7-4fbaeb39457e"
 WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 [sources]
-JumpProcesses = {url = "https://github.com/nifets/JumpProcesses.jl", rev = "cb8b9a0914eb319c91d74ceb9d6d02a9d01632c7"}
 GeneRegulatorySystems = {path = ".."}
+JumpProcesses = {rev = "cb8b9a0914eb319c91d74ceb9d6d02a9d01632c7", url = "https://github.com/nifets/JumpProcesses.jl"}
 Pluto = {rev = "38496f0ed9732e1559d0eefb78e7e8d1b4cb3154", url = "https://github.com/JuliaPluto/Pluto.jl"}
 
 [compat]
+CytoscapeJS = "0.1.3"
 Pluto = "1"
 PrecompileTools = "1.3.4"
 Statistics = "1.11.5"
