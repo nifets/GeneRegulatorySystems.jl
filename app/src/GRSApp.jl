@@ -53,6 +53,10 @@ function (@main)(args)
 end
 
 @compile_workload begin
+    for (method, genes) in ((:pca, 10), (:umap, 60)), components in (2, 3)
+        Trajectories.project(Val(method), rand(genes, 200), components)
+    end
+
     for filename in ("minimal.schedule.json", "differentiation.schedule.json")
         schedule! = Models.load("$SPECIFICATION_EXAMPLES/$filename")
 
