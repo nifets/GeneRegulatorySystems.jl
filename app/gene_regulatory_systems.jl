@@ -128,6 +128,9 @@ md"""
 # ╔═╡ 6c1e4b90-2a77-4d3e-9f58-31b0c7ea52d4
 shared_species_control = @bind show_shared_species PlutoUI.Switch(default=false);
 
+# ╔═╡ 15a55d66-4dfe-45a1-894b-d83f65b38904
+hover_listener = Ref{Any}(nothing)
+
 # ╔═╡ 8d1f0c53-6a24-4e91-b7d5-2c9a04f61b38
 md"""
 ### Gene selection
@@ -1124,9 +1127,6 @@ dashboard_area(
     network_header
 )
 
-# ╔═╡ 27655a09-73a0-4370-933b-2e4fe2e2ecf3
-CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, selected_model);
-
 # ╔═╡ 8d2f6a39-1c4e-4b7a-9e05-6a3c8f2d1b74
 instant_marks = show_instants ?
     Trajectories.instants(simulation.sink; path=selected_path, channel=selected_channel) : []
@@ -1244,6 +1244,27 @@ distribution_view =
 
 # ╔═╡ 7ef1651a-2d1f-4200-b5d5-3a95819aed9a
 hovered_branch = Bonito.Observable{Union{Nothing, String}}(nothing)
+
+# ╔═╡ e61f1bf7-14d7-4db9-bc30-39a57a1eceff
+let
+    function model_of(branch)
+        isnothing(branch) && return selected_model
+        models = filter(in(Vis.paths(network)), unique(
+            segment.model for segment in schedule_segments
+            if GRS.Models.Scheduling.ispathprefix(branch, segment.path)
+        ))
+        length(models) == 1 ? only(models) : selected_model
+    end
+    shown = Ref(model_of(hovered_branch[]))
+    CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, shown[])
+    isnothing(hover_listener[]) || Bonito.off(hover_listener[])
+    hover_listener[] = Bonito.on(hovered_branch) do branch
+        model = model_of(branch)
+        model == shown[] && return
+        shown[] = model
+        CytoscapeJS.set_filter!(cytoscape_graph, :presentIn, model)
+    end
+end;
 
 # ╔═╡ 68f213e4-a64b-4aa1-bf77-9b131e657193
 trajectory_view = if run_simulation
@@ -1368,7 +1389,8 @@ dashboard_area(
 # ╠═d9a6e3c2-7fb4-4156-ac83-4eb21f9d6a05
 # ╠═0d5a9f31-8e46-4c02-b7d1-9a2f6c48e713
 # ╠═4d8d901f-d3c2-4b0a-b2c7-4ed8b2a5280d
-# ╠═27655a09-73a0-4370-933b-2e4fe2e2ecf3
+# ╠═15a55d66-4dfe-45a1-894b-d83f65b38904
+# ╠═e61f1bf7-14d7-4db9-bc30-39a57a1eceff
 # ╠═aa943167-f20e-4349-a14b-d512c8005ab0
 # ╟─8d1f0c53-6a24-4e91-b7d5-2c9a04f61b38
 # ╠═5f0c8a71-93de-4b02-a6c4-1e78d3520fb9

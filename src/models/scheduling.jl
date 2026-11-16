@@ -541,7 +541,7 @@ function (f!::Schedule{Scope})(
             if consolidated_progress === nothing
                 @logmsg Progress :repeating at = f!.path done
             else
-                consolidated_progress(:advancing; done = Models.t(x), path)
+                consolidated_progress(:advancing; done, path)
             end
         end
     else

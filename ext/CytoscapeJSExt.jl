@@ -482,7 +482,6 @@ function selection_view()
         cy.on("remove", "node", scheduleUpdate);
         cy.on("select unselect", "node.gene, node.orphan-species", scheduleUpdate);
         cy.on("filter", () => {
-            cy.nodes(":selected.unmatched").unselect();
             scheduleUpdate();
         });
         cy.on("destroy", () => {

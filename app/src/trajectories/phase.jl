@@ -2,8 +2,8 @@ transform(::CountSeries, y) = log1p(y)
 transform(::FractionSeries, y) = y
 
 function sample(catenation::Catenation, dimension::Dimension, t)
-    series = get(catenation.trajectories, dimension, nothing)
-    isnothing(series) ? NaN : transform(series, series(t))
+    series = get(catenation, dimension)
+    transform(series, series(t))
 end
 
 function snapshots(trace::Trace{<:AbstractVector}, genes, track; resolution=200)

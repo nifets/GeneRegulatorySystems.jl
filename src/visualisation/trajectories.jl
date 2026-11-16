@@ -156,3 +156,8 @@ place!(catenation::Catenation, event) =
 
 (series::Series)(t) =
     (i = searchsortedlast(series.ts, t); iszero(i) ? NaN : series.ys[i])
+
+Base.get(catenation::Catenation, dimension::Dimension) =
+    get(catenation.trajectories, dimension) do
+        seriestype(dimension)(; ts = [-Inf], ys = [0.0])
+    end

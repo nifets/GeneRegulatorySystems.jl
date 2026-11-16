@@ -30,8 +30,7 @@ function counts(
 
         for t in range(from, to; length=resolution)
             for (i, dimension) in enumerate(dimensions)
-                series = get(catenation.trajectories, dimension, nothing)
-                column[i] = isnothing(series) ? NaN : series(t)
+                column[i] = get(catenation, dimension)(t)
             end
             all(isfinite, column) || continue
             append!(values, column)
