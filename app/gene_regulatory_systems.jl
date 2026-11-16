@@ -169,6 +169,9 @@ instants_control = @bind show_instants PlutoUI.Switch(default=true);
 # ╔═╡ e1b7c3d4-6f2a-4b8e-9c01-5d7a2e9f3b46
 connect_samples_control = @bind connect_samples PlutoUI.Switch(default=true);
 
+# ╔═╡ 3f6a9d21-8c4b-4e7f-a2d5-6b1e9c0f7a38
+time_units_control = @bind time_units PlutoUI.Switch(default=true);
+
 # ╔═╡ 7afe83d0-f91c-4d6d-80bb-82d634af59ed
 trajectory_display_control = @bind aggregate_mode PlutoUI.Select(
 	[
@@ -1277,6 +1280,7 @@ trajectory_view = if run_simulation
             group_colors,
             aggregate_mode,
             connect_samples,
+            time_units,
             instants=instant_marks,
             hovered=hovered_branch,
             selection=trajectory_selection,
@@ -1321,6 +1325,10 @@ trajectory_header = isnothing(trajectory_view) ? nothing : @htl("""
             $(connect_samples_control)
         </label>
         <label class="dashboard-option">
+            <span>time units:</span>
+            $(time_units_control)
+        </label>
+        <label class="dashboard-option">
             <span>instants:</span>
             $(instants_control)
         </label>
@@ -1339,7 +1347,7 @@ dashboard_area(
 phase_view = if !isnothing(phase_projection)
     phase_selection = Observable("")
     Trajectories.embed(plot_theme, PageState.link(path_selection, phase_selection)) do
-        Trajectories.render(phase_projection; connect_samples, selection=phase_selection, hovered=hovered_branch)
+        Trajectories.render(phase_projection; connect_samples, time_units, selection=phase_selection, hovered=hovered_branch)
     end
 end
 
@@ -1414,6 +1422,7 @@ dashboard_area(
 # ╠═4c9e2b71-3d8f-4a6e-b5c2-9f1d7e3a8b60
 # ╠═8d2f6a39-1c4e-4b7a-9e05-6a3c8f2d1b74
 # ╠═e1b7c3d4-6f2a-4b8e-9c01-5d7a2e9f3b46
+# ╠═3f6a9d21-8c4b-4e7f-a2d5-6b1e9c0f7a38
 # ╠═7afe83d0-f91c-4d6d-80bb-82d634af59ed
 # ╠═3c9f5be6-70a4-4d82-8e13-b0681c429df1
 # ╠═5b1e9c47-3a82-4d0f-9e61-7c2f8a4d6b30

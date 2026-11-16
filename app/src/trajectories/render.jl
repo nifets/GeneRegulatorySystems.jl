@@ -378,7 +378,7 @@ function render!(
                     "gene: $gene",
                     "activity: $(round(value; digits=2))",
                     "branches: $(data.nlive[column])",
-                    "time: $(round((data.ts[column] + data.ts[column + 1]) / 2; digits=2))",
+                    "time: $(format_time(axis.xticks[], (data.ts[column] + data.ts[column + 1]) / 2))",
                 ], "\n")
             end
         end
@@ -457,7 +457,7 @@ function render!(
         join([
             "gene: $gene";
             isempty(owners[i]) ? String[] : ["path: $(owners[i])"];
-            "time: $(round(points[i][1]; digits=2))";
+            "time: $(format_time(axis.xticks[], points[i][1]))";
             "value: $(round(points[i][2]; digits=2))"
         ], "\n")
     end
@@ -635,7 +635,7 @@ function render!(
                 "median: $(round(data[].median[i]; digits=2))",
                 "q25–q75: $(round(data[].q25[i]; digits=2))–$(round(data[].q75[i]; digits=2))",
                 "branches: $(data[].nlive[i])",
-                "time: $(round(data[].ts[i]; digits=2))",
+                "time: $(format_time(axis.xticks[], data[].ts[i]))",
             ], "\n"),
         )
         on(rows) do all_rows
@@ -669,6 +669,30 @@ function render!(
     axis
 end
 
+struct TimeTicks end
+
+const TIME_UNITS = ("wk" => 604800.0, "d" => 86400.0, "h" => 3600.0, "min" => 60.0, "s" => 1.0)
+
+time_unit(span) =
+    TIME_UNITS[something(findfirst(unit -> span >= 2 * last(unit), TIME_UNITS), lastindex(TIME_UNITS))]
+
+function WGLMakie.Makie.get_ticks(::TimeTicks, _scale, _formatter, vmin, vmax)
+    name, seconds = time_unit(vmax - vmin)
+    values = WGLMakie.Makie.get_tickvalues(
+        WGLMakie.Makie.WilkinsonTicks(5; k_min=3), vmin / seconds, vmax / seconds)
+    labels = WGLMakie.Makie.get_ticklabels(WGLMakie.Makie.automatic, values)
+    (values .* seconds, string.(labels, " ", name))
+end
+
+time_ticks(time_units) = time_units ? TimeTicks() : WGLMakie.Makie.automatic
+
+format_time(::WGLMakie.Makie.Automatic, t) = string(round(t; digits=2))
+
+function format_time(::TimeTicks, t)
+    name, seconds = time_unit(abs(t))
+    "$(round(t / seconds; digits=2)) $name"
+end
+
 function extent(trajectories::Trace{<:AbstractDict})
     segments = unique(
         segment
@@ -695,7 +719,9 @@ function render(
     instants=(),
     hovered=Observable{Union{Nothing, String}}(nothing),
     selection=Observable(""),
+    time_units=false,
 )
+    xticks = time_ticks(time_units)
     aggregate_mode = Symbol(aggregate_mode)
     aggregate_mode in (:raw, :aggregate) || throw(
         ArgumentError("aggregate_mode must be :raw or :aggregate"),
@@ -720,6 +746,7 @@ function render(
             xlabel=row == length(tracks) ? "time" : "",
             backgroundcolor=:transparent,
             limits=(from < to ? (from, to) : nothing, nothing),
+            xticks,
             xzoomlock=false,
             yzoomlock=true,
             xpanlock=false,
@@ -772,7 +799,7 @@ function render(
     end
 
     for axis in axes, mark in instants
-        text = join(["time: $(round(mark.t; digits=2))"; mark.entries], "\n")
+        text = join(["time: $(format_time(axis.xticks[], mark.t))"; mark.entries], "\n")
         vlines!(
             axis,
             [mark.t];

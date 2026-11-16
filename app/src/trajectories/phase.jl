@@ -248,6 +248,7 @@ function render(
     connect_samples=false,
     selection=Observable(""),
     hovered=Observable{Union{Nothing, String}}(nothing),
+    time_units=false,
 )
     n = min(size(projection.coords, 1), 3)
     figure = Figure()
@@ -315,7 +316,7 @@ function render(
     end
     tooltip_for(source) = (_, i, _) -> begin
         j = source.sources[i]
-        "branch: $(projection.descriptions[j])\ntime: $(round(projection.states[j].t; digits=2))"
+        "branch: $(projection.descriptions[j])\ntime: $(format_time(time_ticks(time_units), projection.states[j].t))"
     end
     inspection(source; follow=true) =
         (; inspector_hover=hover_with(source; follow), inspector_label=tooltip_for(source))
