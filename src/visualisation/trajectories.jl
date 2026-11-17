@@ -45,22 +45,6 @@ paths(index) = sort!(unique(
         if !isempty(prefix)
     ); by=path -> (pathdepth(path), pathorder(path)))
 
-function segments(schedule!::Models.Scheduling.Schedule)
-    result = @NamedTuple{
-        path::String, model::String, label::String, into::Union{Nothing, String}
-    }[]
-    function collect_segment!(primitive!, x, Δt; path, into = nothing, kwargs...)
-        push!(result, (;
-            path = String(path),
-            model = primitive!.path,
-            label = string(get(primitive!.bindings, :label, "")),
-            into = isnothing(into) ? nothing : String(into),
-        ))
-        nothing
-    end
-    schedule!(Models.FlatState(); dryrun = collect_segment!, parallel = false)
-    result
-end
 
 describe(path, label) = isempty(label) ? String(path) : "$path ($label)"
 

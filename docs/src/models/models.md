@@ -113,5 +113,5 @@ Models.Model
 Models.Instant
 Models.Wrapped
 Models.parameters
-Models.remake
+Models.remake(::Any, ::AbstractDict)
 ```

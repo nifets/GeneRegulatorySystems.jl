@@ -2,21 +2,26 @@
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Catalyst = "479239e8-5488-4da2-87a7-35f2df7eef83"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 GeneRegulatorySystems = "321a2579-640d-4198-9790-c715c19becf3"
 GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 JumpProcesses = "ccbc3e58-028d-4f4c-8cd5-9ae44345cda5"
 Latexify = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
+LikelihoodProfiler = "93acb638-a083-5915-8dce-d129bc6a3f59"
 LiveServer = "16fef848-5104-11e9-1b77-fb7a48bbb589"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 NetworkLayout = "46757867-2c16-5918-afeb-47bfcb05e46a"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+OptimizationLBFGSB = "22f7324a-a79d-40f2-bebe-3af60c77bd15"
 OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
+PEtab = "48d54b35-e43e-4a66-a5a1-dde6b987cf69"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 
 [sources]
 GeneRegulatorySystems = {path = ".."}
-JumpProcesses = {url = "https://github.com/nifets/JumpProcesses.jl", rev = "cb8b9a0914eb319c91d74ceb9d6d02a9d01632c7"}
+JumpProcesses = {rev = "cb8b9a0914eb319c91d74ceb9d6d02a9d01632c7", url = "https://github.com/nifets/JumpProcesses.jl"}
 
 [compat]
 LiveServer = "=1.5.0"

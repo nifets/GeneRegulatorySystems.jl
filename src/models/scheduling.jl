@@ -789,6 +789,30 @@ Merge(::Val{:+}) = Merge(+)
 
 Specifications.constructor(::Val{:merge}) = Merge
 
+function segments(schedule!::Schedule)
+    result = @NamedTuple{
+        i::Int, path::String, from::Float64, to::Float64,
+        model::String, label::String, into::Union{Nothing, String},
+    }[]
+    function collect_segment!(primitive!, x, Δt; path, into = nothing, _...)
+        push!(result, (;
+            i = length(result) + 1,
+            path = String(path),
+            from = Models.t(x),
+            to = Models.t(x) + Δt,
+            model = primitive!.path,
+            label = string(get(primitive!.bindings, :label, "")),
+            into = isnothing(into) ? nothing : String(into),
+        ))
+        nothing
+    end
+    schedule!(FlatState(); dryrun = collect_segment!, parallel = false)
+    result
+end
+
+models(schedule!::Schedule, index = segments(schedule!)) = Dict(
+    path => reify(schedule!, path) for path in unique(segment.model for segment in index)
+)
 function (f!::Merge)(x::Branched, _Δt::Float64; _...)
     accumulator = FlatState(
         t = Models.t(x.stem),

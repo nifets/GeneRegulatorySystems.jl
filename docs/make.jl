@@ -2,6 +2,9 @@ import ArgParse
 using Documenter
 import Markdown
 using GeneRegulatorySystems
+using PEtab
+
+const PEtabExt = Base.get_extension(GeneRegulatorySystems, :PEtabExt)
 
 include_tool_script(m, name) =
     Base.include(m, "$(@__DIR__)/../tools/$name/script.jl")
@@ -36,9 +39,13 @@ makedocs(
             "tools/reify.md"
             "tools/export.md"
         ]
+        "Extensions" => [
+            "extensions/petab.md"
+        ]
     ],
     modules = [
         Models
         Specifications
+        PEtabExt
     ]
 )

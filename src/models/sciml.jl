@@ -522,6 +522,11 @@ end
 system(f!::JumpModel) = f!.problem.prob.f.sys
 method(f!::JumpModel) = f!.problem.aggregator
 
+reaction_system(primitive!::Models.Scheduling.Primitive) = reaction_system(primitive!.f!)
+reaction_system(f!::Models.Wrapped) =
+    f!.definition isa Catalyst.ReactionSystem ? f!.definition : reaction_system(f!.model)
+reaction_system(_) = nothing
+
 variable_symbols(f!::JumpModel) = SymbolicIndexingInterface.variable_symbols(f!.problem)
 parameter_symbols(f!::JumpModel) = SymbolicIndexingInterface.parameter_symbols(f!.problem)
 
