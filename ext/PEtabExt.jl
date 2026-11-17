@@ -118,7 +118,7 @@ function PEtab.PEtabModel(
 
     t = ModelingToolkit.Num(get_iv(system))
 
-    labels = string.(measurements.simulation_id)
+    labels = String.(string.(measurements.simulation_id))
     measurements = copy(measurements)
     measurements.time = Float64.(measurements.time)
     initials = Dict{String, Vector{Pair}}()
@@ -137,6 +137,9 @@ function PEtab.PEtabModel(
         for (time, changed) in changes
             time == 0.0 && continue
             push!(events, PEtabEvent(t == time, changed...; condition_ids = [label]))
+            # PEtab.jl breaks on measurements exactly at an event time
+            at_event = in_condition .& isapprox.(measurements.time, time; atol = 1e-9)
+            measurements.time[at_event] .-= 1e-3
         end
     end
 
